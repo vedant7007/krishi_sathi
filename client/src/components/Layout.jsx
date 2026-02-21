@@ -2,6 +2,8 @@ import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n/i18n';
 import { useFarm } from '../context/FarmContext';
+import AppLogo from './AppLogo';
+import CallMeButton from './CallMeButton';
 import {
   LayoutDashboard,
   Sprout,
@@ -88,14 +90,8 @@ export default function Layout() {
       {/* ======== Desktop Sidebar ======== */}
       <aside className="hidden lg:flex lg:flex-col lg:w-64 bg-white border-r border-gray-200 shadow-sm">
         {/* Logo */}
-        <div className="flex items-center gap-3 px-6 py-5 border-b border-gray-100">
-          <div className="w-9 h-9 bg-[#2E7D32] rounded-lg flex items-center justify-center">
-            <Sprout className="w-5 h-5 text-white" />
-          </div>
-          <div>
-            <h1 className="text-lg font-bold text-[#2E7D32]">{t('app.name')}</h1>
-            <p className="text-xs text-gray-500">{t('app.tagline')}</p>
-          </div>
+        <div className="px-6 py-5 border-b border-gray-100">
+          <AppLogo size="sm" />
         </div>
 
         {/* Nav links */}
@@ -159,12 +155,7 @@ export default function Layout() {
           <aside className="absolute left-0 top-0 h-full w-72 bg-white shadow-xl flex flex-col">
             {/* Logo + close */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 bg-[#2E7D32] rounded-lg flex items-center justify-center">
-                  <Sprout className="w-5 h-5 text-white" />
-                </div>
-                <h1 className="text-lg font-bold text-[#2E7D32]">{t('app.name')}</h1>
-              </div>
+              <AppLogo size="sm" />
               <button
                 onClick={closeSidebar}
                 className="p-2 rounded-lg hover:bg-gray-100"
@@ -235,11 +226,8 @@ export default function Layout() {
                 <Menu className="w-5 h-5 text-gray-600" />
               </button>
               {/* Mobile logo */}
-              <div className="flex items-center gap-2 lg:hidden">
-                <div className="w-8 h-8 bg-[#2E7D32] rounded-lg flex items-center justify-center">
-                  <Sprout className="w-4 h-4 text-white" />
-                </div>
-                <span className="font-bold text-[#2E7D32]">{t('app.name')}</span>
+              <div className="lg:hidden">
+                <AppLogo size="sm" />
               </div>
             </div>
 
@@ -304,6 +292,9 @@ export default function Layout() {
             &copy; {new Date().getFullYear()} KrishiSathi. All rights reserved.
           </p>
         </footer>
+
+        {/* ======== Floating Call Me Button ======== */}
+        <CallMeButton />
 
         {/* ======== Mobile Bottom Nav ======== */}
         <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg lg:hidden z-40">

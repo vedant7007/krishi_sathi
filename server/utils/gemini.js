@@ -1,13 +1,16 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const translate = require('google-translate-api-x');
+const fs = require('fs');
+const path = require('path');
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // Try multiple models with fallback for rate limits / 404s
 const MODELS = [
-  'gemini-2.0-flash-lite',
   'gemini-2.0-flash',
-  'gemini-2.5-flash-lite',
-  'gemini-2.5-flash',
+  'gemini-1.5-flash',
+  'gemini-2.0-flash-lite',
+  'gemini-1.5-pro',
 ];
 let currentModelIdx = 0;
 
@@ -15,47 +18,332 @@ function getModel() {
   return genAI.getGenerativeModel({ model: MODELS[currentModelIdx] });
 }
 
+// ─── Persistent file-based translation cache ───
+const CACHE_DIR = path.join(__dirname, '..', '.translation-cache');
+if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
+
+// Also keep in-memory for fast access
+const memCache = new Map();
+
+function hashStr(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash) + str.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash).toString(36);
+}
+
+function getCached(key) {
+  // Check memory first
+  if (memCache.has(key)) return memCache.get(key);
+  // Check file cache
+  const filePath = path.join(CACHE_DIR, `${key}.json`);
+  try {
+    if (fs.existsSync(filePath)) {
+      const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      memCache.set(key, data);
+      return data;
+    }
+  } catch { /* ignore corrupt files */ }
+  return null;
+}
+
+function setCache(key, value) {
+  memCache.set(key, value);
+  try {
+    fs.writeFileSync(
+      path.join(CACHE_DIR, `${key}.json`),
+      JSON.stringify(value),
+      'utf8'
+    );
+  } catch { /* ignore write errors */ }
+}
+
+// ─── Free Google Translate fallback ───
+async function googleTranslateText(text, targetLang) {
+  if (!text || text.trim().length === 0) return text;
+  try {
+    const result = await translate(text, { to: targetLang });
+    return result.text;
+  } catch (err) {
+    console.error('[googleTranslate] Error:', err.message);
+    return text;
+  }
+}
+
 /**
- * Send a prompt to Gemini and get text response.
+ * Translate an array of objects using free Google Translate (field-by-field).
+ * Used as fallback when Gemini is rate-limited.
  */
-exports.generate = async (prompt) => {
-  // Try each model, rotating on rate limit errors
-  for (let attempt = 0; attempt < MODELS.length; attempt++) {
-    try {
-      const model = getModel();
-      const result = await model.generateContent(prompt);
-      return result.response.text();
-    } catch (err) {
-      if (err.message?.includes('429') || err.message?.includes('quota') || err.message?.includes('404') || err.message?.includes('not found')) {
-        currentModelIdx = (currentModelIdx + 1) % MODELS.length;
-        continue;
+async function googleTranslateBatch(items, fields, targetLang) {
+  const translated = [];
+  for (const item of items) {
+    const copy = { ...item };
+    for (const f of fields) {
+      if (copy[f] && typeof copy[f] === 'string' && copy[f].trim()) {
+        copy[f] = await googleTranslateText(copy[f], targetLang);
       }
-      throw err;
+    }
+    translated.push(copy);
+  }
+  return translated;
+}
+
+/**
+ * Translate a single object's string values using free Google Translate.
+ */
+async function googleTranslateObj(obj, targetLang) {
+  if (!obj || typeof obj !== 'object') return obj;
+  const copy = Array.isArray(obj) ? [...obj] : { ...obj };
+  for (const key of Object.keys(copy)) {
+    if (typeof copy[key] === 'string' && copy[key].trim()) {
+      copy[key] = await googleTranslateText(copy[key], targetLang);
     }
   }
+  return copy;
+}
+
+/**
+ * Send a prompt to Gemini and get text response.
+ * Includes retry with exponential backoff on rate limits.
+ */
+exports.generate = async (prompt) => {
+  const MAX_RETRIES = 3;
+
+  for (let retry = 0; retry < MAX_RETRIES; retry++) {
+    for (let attempt = 0; attempt < MODELS.length; attempt++) {
+      try {
+        const model = getModel();
+        const result = await model.generateContent(prompt);
+        return result.response.text();
+      } catch (err) {
+        if (
+          err.message?.includes('429') ||
+          err.message?.includes('quota') ||
+          err.message?.includes('404') ||
+          err.message?.includes('not found')
+        ) {
+          currentModelIdx = (currentModelIdx + 1) % MODELS.length;
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    if (retry < MAX_RETRIES - 1) {
+      const backoffMs = Math.pow(2, retry + 1) * 1000;
+      console.log(`[Gemini] All models rate limited, retrying in ${backoffMs / 1000}s...`);
+      await new Promise((r) => setTimeout(r, backoffMs));
+    }
+  }
+
   throw new Error('All Gemini models rate limited. Please try again later.');
 };
 
 /**
- * Translate a JSON object's string values to target language using Gemini.
- * Used for translating advisory content, scheme descriptions, etc.
+ * Translate a JSON object's string values.
+ * Tries Gemini first, falls back to free Google Translate.
  */
 exports.translateJSON = async (obj, targetLang) => {
   if (!obj || targetLang === 'en') return obj;
   const langName = targetLang === 'hi' ? 'Hindi' : targetLang === 'te' ? 'Telugu' : 'English';
 
+  // Check cache
+  const cacheKey = 'tj_' + hashStr(JSON.stringify(obj) + ':' + targetLang);
+  const cached = getCached(cacheKey);
+  if (cached) {
+    console.log(`[translateJSON] Cache hit for ${langName}`);
+    return cached;
+  }
+
+  // Try Gemini first
   const prompt = `Translate ALL string values in the following JSON object to ${langName}.
 Keep all keys exactly the same. Keep numbers and null values unchanged.
 Return ONLY the valid JSON, no markdown fences, no explanation.
 
 ${JSON.stringify(obj)}`;
 
-  const result = await exports.generate(prompt);
   try {
+    const result = await exports.generate(prompt);
     const cleaned = result.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-    return JSON.parse(cleaned);
-  } catch {
+    const parsed = JSON.parse(cleaned);
+    console.log(`[translateJSON] Gemini translated to ${langName}`);
+    setCache(cacheKey, parsed);
+    return parsed;
+  } catch (geminiErr) {
+    console.log(`[translateJSON] Gemini failed, using Google Translate fallback for ${langName}`);
+    try {
+      const result = await googleTranslateObj(obj, targetLang);
+      setCache(cacheKey, result);
+      return result;
+    } catch (err) {
+      console.error(`[translateJSON] All translation failed for ${langName}:`, err.message);
+      return obj;
+    }
+  }
+};
+
+/**
+ * Translate an array of objects in a SINGLE call (batch).
+ * Tries Gemini first, falls back to free Google Translate.
+ */
+exports.translateBatch = async (items, fields, targetLang) => {
+  if (!items || items.length === 0 || targetLang === 'en') return items;
+
+  const langName = targetLang === 'hi' ? 'Hindi' : targetLang === 'te' ? 'Telugu' : 'English';
+
+  // Build only the translatable parts for cache key
+  const toTranslate = items.map((item, idx) => {
+    const obj = { _i: idx };
+    fields.forEach((f) => { obj[f] = item[f] || ''; });
     return obj;
+  });
+
+  // Check cache
+  const cacheKey = 'tb_' + hashStr(JSON.stringify(toTranslate) + ':' + targetLang);
+  const cached = getCached(cacheKey);
+  if (cached) {
+    console.log(`[translateBatch] Cache hit for ${langName} (${items.length} items)`);
+    return cached;
+  }
+
+  // Try Gemini first (single API call for all items)
+  const prompt = `Translate ALL string values in the following JSON array to ${langName}.
+Keep all keys exactly the same. Keep _i numbers unchanged.
+Return ONLY the valid JSON array, no markdown fences, no explanation.
+
+${JSON.stringify(toTranslate)}`;
+
+  try {
+    const result = await exports.generate(prompt);
+    const cleaned = result.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+    const parsed = JSON.parse(cleaned);
+
+    if (!Array.isArray(parsed)) throw new Error('Not an array');
+
+    const merged = items.map((item, idx) => {
+      const translated = parsed.find((p) => p._i === idx) || parsed[idx];
+      if (!translated) return item;
+      const copy = { ...item };
+      fields.forEach((f) => { if (translated[f]) copy[f] = translated[f]; });
+      return copy;
+    });
+
+    console.log(`[translateBatch] Gemini translated ${items.length} items to ${langName}`);
+    setCache(cacheKey, merged);
+    return merged;
+  } catch (geminiErr) {
+    // Fallback: free Google Translate
+    console.log(`[translateBatch] Gemini failed, using Google Translate fallback for ${langName}`);
+    try {
+      const merged = await googleTranslateBatch(items, fields, targetLang);
+      console.log(`[translateBatch] Google Translate: ${items.length} items to ${langName}`);
+      setCache(cacheKey, merged);
+      return merged;
+    } catch (err) {
+      console.error(`[translateBatch] All translation failed for ${langName}:`, err.message);
+      return items;
+    }
+  }
+};
+
+/**
+ * Voice AI Agent — send farmer's message to Gemini with full context.
+ * Returns short, voice-friendly response in the farmer's language.
+ */
+exports.askFarmingAgent = async (userMessage, farmerContext, language = 'en') => {
+  const langName = language === 'hi' ? 'Hindi' : language === 'te' ? 'Telugu' : 'English';
+  const farmer = farmerContext?.farmer || {};
+  const advisory = farmerContext?.advisory;
+  const weather = farmerContext?.weather;
+  const prices = farmerContext?.prices || [];
+  const schemes = farmerContext?.schemes || [];
+
+  // Build weather summary
+  let weatherSummary = 'No weather data available.';
+  if (weather?.current) {
+    const c = weather.current;
+    weatherSummary = `Current: ${c.temp || 'N/A'}\u00b0C, humidity ${c.humidity || 'N/A'}%, wind ${c.windSpeed || 'N/A'} km/h, ${c.condition || c.description || 'N/A'}.`;
+    if (weather.forecast?.length > 0) {
+      weatherSummary += ' Forecast: ' + weather.forecast.map((f) => {
+        const d = f.date ? new Date(f.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '?';
+        return `${d}: ${f.tempMin || '?'}-${f.tempMax || '?'}\u00b0C, rain ${f.rainProbability || 0}%`;
+      }).join('; ') + '.';
+    }
+  }
+
+  // Build advisory summary
+  let advisorySummary = 'No crop advisory data available.';
+  if (advisory) {
+    const parts = [];
+    if (advisory.fertilizer?.type) parts.push(`Fertilizer: ${advisory.fertilizer.type}, ${advisory.fertilizer.quantity || ''}, ${advisory.fertilizer.schedule || ''}`);
+    if (advisory.irrigation?.method) parts.push(`Irrigation: ${advisory.irrigation.method}, ${advisory.irrigation.frequency || ''}`);
+    if (advisory.pest?.commonPests?.length) parts.push(`Pests: ${advisory.pest.commonPests.join(', ')}. Prevention: ${advisory.pest.prevention || 'N/A'}`);
+    if (advisory.sowing?.bestTime) parts.push(`Sowing: ${advisory.sowing.bestTime}, seed rate ${advisory.sowing.seedRate || 'N/A'}`);
+    if (advisory.harvest?.timing) parts.push(`Harvest: ${advisory.harvest.timing}`);
+    if (advisory.msp?.price) parts.push(`MSP: \u20b9${advisory.msp.price} ${advisory.msp.unit || '/quintal'}`);
+    advisorySummary = parts.join('\n') || advisorySummary;
+  }
+
+  // Build prices summary
+  let pricesSummary = 'No market price data available.';
+  if (prices.length > 0) {
+    pricesSummary = prices.map((p) => {
+      const d = p.date ? new Date(p.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '';
+      return `${p.mandi || 'Unknown mandi'} (${p.district || p.state || ''}): \u20b9${p.price}/quintal ${p.maxPrice ? `(range \u20b9${p.minPrice}-\u20b9${p.maxPrice})` : ''} ${d}`;
+    }).join('\n');
+  }
+
+  // Build schemes summary
+  let schemesSummary = 'No scheme data available.';
+  if (schemes.length > 0) {
+    schemesSummary = schemes.map((s) => {
+      return `${s.name}: ${s.benefits || s.description || 'N/A'}${s.applicationUrl ? ` Apply: ${s.applicationUrl}` : ''}`;
+    }).join('\n');
+  }
+
+  const systemPrompt = `You are KrishiSathi AI \u2014 a warm, knowledgeable farming assistant for Indian farmers.
+You are speaking with ${farmer.name || 'a farmer'} from ${farmer.district || 'India'}${farmer.state ? ', ' + farmer.state : ''}.
+
+FARMER PROFILE:
+- Crop: ${farmer.crop || 'Not specified'}
+- Soil: ${farmer.soilType || 'Not specified'}
+- Land: ${farmer.landHolding || 'Not specified'} acres
+- Language: ${langName}
+
+LIVE DATA (answer from this \u2014 do NOT make up numbers):
+WEATHER: ${weatherSummary}
+CROP ADVISORY: ${advisorySummary}
+MARKET PRICES: ${pricesSummary}
+GOVERNMENT SCHEMES: ${schemesSummary}
+
+RESPONSE RULES:
+1. Respond ONLY in ${langName}. If Hindi, use conversational Hindi (not formal). If Telugu, use conversational Telugu.
+2. Maximum 2-3 sentences. This is a voice call \u2014 farmer is LISTENING, not reading.
+3. Use "ji" suffix in Hindi, "garu" in Telugu. Be warm like a friendly advisor, not robotic.
+4. Give EXACT numbers from the data. Never say "check with local authority" \u2014 YOU are the authority.
+5. If data is unavailable, say so honestly: "Abhi yeh data mere paas nahi hai ji, lekin..."
+6. After answering, ask one SHORT follow-up: "Aur kuch poochna hai?" / "\u0c07\u0c02\u0c15\u0c47\u0c2e\u0c48\u0c28\u0c3e?" / "Anything else?"
+7. If farmer says goodbye words (bas/bye/dhanyavaad/shukriya/thanks), give warm goodbye + "Jai Kisan!"
+8. For weather: include specific dates, temperatures, and what farming action to take.
+9. For prices: include mandi name, exact price in rupees, and whether it's a good time to sell.
+10. For schemes: tell if they're eligible and how to apply.
+11. If farmer asks something outside farming, gently redirect: "Main kheti mein madad kar sakta hoon ji."`;
+
+  const prompt = `${systemPrompt}\n\nFarmer: ${userMessage}\nKrishiSathi:`;
+
+  try {
+    const response = await exports.generate(prompt);
+    return response.trim();
+  } catch (err) {
+    console.error('[askFarmingAgent] Gemini error:', err.message);
+    const fallbacks = {
+      hi: 'Maaf keejiye ji, abhi jawab mein thodi dikkat aa rahi hai. Kripya thodi der baad dobara poochiye.',
+      te: 'Kshaminchandi garu, ippudu samasyam vachindi. Dayachesi koddisepatiki malli adagandi.',
+      en: 'Sorry, I am having trouble responding right now. Please try again in a moment.',
+    };
+    return fallbacks[language] || fallbacks.en;
   }
 };
 
