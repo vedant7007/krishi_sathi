@@ -7,10 +7,10 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // Try multiple models with fallback for rate limits / 404s
 const MODELS = [
+  'gemini-2.5-flash',
+  'gemini-2.5-flash-lite',
   'gemini-2.0-flash',
-  'gemini-1.5-flash',
   'gemini-2.0-flash-lite',
-  'gemini-1.5-pro',
 ];
 let currentModelIdx = 0;
 
