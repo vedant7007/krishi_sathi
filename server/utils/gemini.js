@@ -338,18 +338,40 @@ RESPONSE RULES:
 10. For schemes: tell if they're eligible and how to apply.
 11. If farmer asks something outside farming, gently redirect: "Main kheti mein madad kar sakta hoon ji."`;
 
-  const prompt = `${systemPrompt}\n\nFarmer: ${userMessage}\nKrishiSathi:`;
+  const fallbacks = {
+    hi: 'Maaf keejiye ji, abhi jawab mein thodi dikkat aa rahi hai. Kripya thodi der baad dobara poochiye.',
+    te: 'Kshaminchandi garu, ippudu samasyam vachindi. Dayachesi koddisepatiki malli adagandi.',
+    en: 'Sorry, I am having trouble responding right now. Please try again in a moment.',
+  };
 
+  // Try Claude Haiku first (cheap + fast + reliable), then Gemini as fallback
+  if (process.env.ANTHROPIC_API_KEY) {
+    try {
+      const Anthropic = require('@anthropic-ai/sdk');
+      const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+      const msg = await anthropic.messages.create({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 300,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userMessage }],
+      });
+      const text = msg.content?.[0]?.text;
+      if (text) {
+        console.log('[askFarmingAgent] Claude Haiku responded');
+        return text.trim();
+      }
+    } catch (err) {
+      console.warn('[askFarmingAgent] Claude Haiku failed:', err.message?.substring(0, 80));
+    }
+  }
+
+  // Fallback to Gemini
+  const prompt = `${systemPrompt}\n\nFarmer: ${userMessage}\nKrishiSathi:`;
   try {
     const response = await exports.generate(prompt);
     return response.trim();
   } catch (err) {
-    console.error('[askFarmingAgent] Gemini error:', err.message);
-    const fallbacks = {
-      hi: 'Maaf keejiye ji, abhi jawab mein thodi dikkat aa rahi hai. Kripya thodi der baad dobara poochiye.',
-      te: 'Kshaminchandi garu, ippudu samasyam vachindi. Dayachesi koddisepatiki malli adagandi.',
-      en: 'Sorry, I am having trouble responding right now. Please try again in a moment.',
-    };
+    console.error('[askFarmingAgent] Gemini fallback also failed:', err.message);
     return fallbacks[language] || fallbacks.en;
   }
 };
