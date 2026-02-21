@@ -57,7 +57,17 @@ def decode_image(data_url_or_base64):
 
 @app.route('/health', methods=['GET'])
 def health():
-    return jsonify({"status": "ok", "service": "face-recognition"})
+    return jsonify({"status": "ok", "service": "face-recognition", "model_loaded": _deepface is not None})
+
+
+@app.route('/preload', methods=['POST'])
+def preload():
+    """Trigger model preload (call once after deploy to warm up)."""
+    try:
+        get_deepface()
+        return jsonify({"success": True, "message": "Model loaded"})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
 
 
 @app.route('/encode', methods=['POST'])
@@ -216,11 +226,8 @@ def verify_faces():
         return jsonify({"success": False, "message": str(e)}), 500
 
 
-if __name__ == '__main__':
-    port = int(os.environ.get('FACE_SERVICE_PORT', 5001))
-    print(f"[FaceService] Starting on port {port}...", flush=True)
-
-    # Pre-load model on startup
+def preload_model():
+    """Pre-load the face recognition model."""
     print("[FaceService] Pre-loading face recognition model...", flush=True)
     try:
         get_deepface()
@@ -228,4 +235,14 @@ if __name__ == '__main__':
     except Exception as e:
         print(f"[FaceService] Warning: Could not pre-load model: {e}", flush=True)
 
+
+# Pre-load when running directly OR with gunicorn --preload
+if os.environ.get('PRELOAD_MODEL', '').lower() in ('1', 'true', 'yes'):
+    preload_model()
+
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', os.environ.get('FACE_SERVICE_PORT', 5001)))
+    print(f"[FaceService] Starting on port {port}...", flush=True)
+    preload_model()
     app.run(host='0.0.0.0', port=port, debug=False)
