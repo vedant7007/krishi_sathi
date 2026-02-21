@@ -109,13 +109,20 @@ async function googleTranslateObj(obj, targetLang) {
  * Includes retry with exponential backoff on rate limits.
  */
 exports.generate = async (prompt) => {
-  const MAX_RETRIES = 3;
+  const MAX_RETRIES = 2;
 
   for (let retry = 0; retry < MAX_RETRIES; retry++) {
-    for (let attempt = 0; attempt < MODELS.length; attempt++) {
+    // Always try models in priority order (best first)
+    for (let i = 0; i < MODELS.length; i++) {
       try {
-        const model = getModel();
+        const modelName = MODELS[i];
+        const model = genAI.getGenerativeModel({ model: modelName });
         const result = await model.generateContent(prompt);
+        // Remember which model worked for logging
+        if (i !== currentModelIdx) {
+          console.log(`[Gemini] Switched to ${modelName}`);
+          currentModelIdx = i;
+        }
         return result.response.text();
       } catch (err) {
         if (
@@ -124,7 +131,7 @@ exports.generate = async (prompt) => {
           err.message?.includes('404') ||
           err.message?.includes('not found')
         ) {
-          currentModelIdx = (currentModelIdx + 1) % MODELS.length;
+          console.log(`[Gemini] ${MODELS[i]} failed (${err.status || '?'}), trying next...`);
           continue;
         }
         throw err;
@@ -132,8 +139,8 @@ exports.generate = async (prompt) => {
     }
 
     if (retry < MAX_RETRIES - 1) {
-      const backoffMs = Math.pow(2, retry + 1) * 1000;
-      console.log(`[Gemini] All models rate limited, retrying in ${backoffMs / 1000}s...`);
+      const backoffMs = 2000;
+      console.log(`[Gemini] All models failed, retrying in ${backoffMs / 1000}s...`);
       await new Promise((r) => setTimeout(r, backoffMs));
     }
   }
