@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n/i18n';
 import { useNavigate, Link } from 'react-router-dom';
 import { register } from '../services/authService';
 import { translateCrop, translateSoil, translateState } from '../utils/translate';
+import AppLogo from '../components/AppLogo';
 import {
   User,
   Phone,
@@ -19,6 +20,7 @@ import {
   Wheat,
   Layers,
   Globe,
+  Camera,
 } from 'lucide-react';
 
 const CROP_OPTIONS = [
@@ -130,6 +132,13 @@ export default function Register() {
     push: false,
   });
 
+  const [faceImage, setFaceImage] = useState('');
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [cameraError, setCameraError] = useState('');
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const streamRef = useRef(null);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -162,6 +171,52 @@ export default function Register() {
   const handleToggle = (key) => {
     setAlertPrefs((prev) => ({ ...prev, [key]: !prev[key] }));
   };
+
+  const openCamera = useCallback(async () => {
+    setCameraError('');
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user', width: { ideal: 320 }, height: { ideal: 240 } },
+      });
+      streamRef.current = stream;
+      setCameraOpen(true);
+      // Wait for the video element to be rendered
+      setTimeout(() => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.play();
+        }
+      }, 100);
+    } catch {
+      setCameraError(t('register.cameraError', 'Could not access camera. Please allow camera permission.'));
+    }
+  }, [t]);
+
+  const stopCamera = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+    setCameraOpen(false);
+  }, []);
+
+  const capturePhoto = useCallback(() => {
+    if (!videoRef.current || !canvasRef.current) return;
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+    setFaceImage(dataUrl);
+    stopCamera();
+  }, [stopCamera]);
+
+  const retakePhoto = useCallback(() => {
+    setFaceImage('');
+    openCamera();
+  }, [openCamera]);
 
   const detectGPS = () => {
     if (!navigator.geolocation) {
@@ -231,8 +286,13 @@ export default function Register() {
       return;
     }
 
-    if (form.aadhaarNumber && form.aadhaarNumber.length !== 12) {
-      setError(t('register.aadhaarInvalid'));
+    if (!form.aadhaarNumber || form.aadhaarNumber.length !== 12) {
+      setError(t('register.aadhaarInvalid', 'Please enter a valid 12-digit Aadhaar number'));
+      return;
+    }
+
+    if (!faceImage) {
+      setError(t('register.faceRequired', 'Please capture your face photo'));
       return;
     }
 
@@ -250,8 +310,6 @@ export default function Register() {
         delete payload.soilType;
         delete payload.landHolding;
       }
-      if (!payload.aadhaarNumber) delete payload.aadhaarNumber;
-
       if (location.lat && location.lon) {
         payload.location = {
           lat: Number(location.lat),
@@ -262,6 +320,7 @@ export default function Register() {
 
       payload.alertPreferences = alertPrefs;
       payload.language = selectedLanguage;
+      if (faceImage) payload.faceImage = faceImage;
 
       await register(payload);
       navigate('/login');
@@ -278,14 +337,9 @@ export default function Register() {
   return (
     <div className="min-h-screen bg-background flex flex-col items-center py-8 px-4">
       {/* Branding */}
-      <div className="text-center mb-6">
-        <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary-100 mb-3">
-          <Sprout className="w-8 h-8 text-primary-800" />
-        </div>
-        <h1 className="text-2xl font-bold text-primary-800">
-          {t('app.name')}
-        </h1>
-        <p className="text-sm text-gray-500 mt-1">{t('register.createAccount')}</p>
+      <div className="flex flex-col items-center mb-6">
+        <AppLogo size="lg" />
+        <p className="text-sm text-gray-500 mt-2">{t('register.createAccount')}</p>
       </div>
 
       {/* Registration Card */}
@@ -465,8 +519,7 @@ export default function Register() {
                   htmlFor="aadhaarNumber"
                   className="block text-sm font-semibold text-gray-700 mb-1"
                 >
-                  {t('register.aadhaar')}
-                  <span className="text-xs text-gray-400 ml-1">{t('register.aadhaarOptional')}</span>
+                  {t('register.aadhaar')} <span className="text-red-500">*</span>
                 </label>
                 <div className="relative">
                   <Shield className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
@@ -488,6 +541,101 @@ export default function Register() {
                 </p>
               </div>
             </div>
+          </div>
+
+          <hr className="border-gray-200" />
+
+          {/* ====== FACE CAPTURE SECTION ====== */}
+          <div>
+            <SectionHeader icon={Camera} title={t('register.faceCapture', 'Face Photo')} />
+            <p className="text-xs text-gray-500 mb-3">
+              {t('register.faceCaptureHint', 'Capture your face photo for identity verification at login.')} <span className="text-red-500 font-semibold">*</span>
+            </p>
+
+            {!faceImage && !cameraOpen && (
+              <button
+                type="button"
+                onClick={openCamera}
+                className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl border-2 border-dashed border-primary-300 bg-primary-50 text-primary-800 font-semibold text-sm hover:bg-primary-100 transition-colors"
+                style={{ minHeight: '48px' }}
+              >
+                <Camera className="w-5 h-5" />
+                {t('register.openCamera', 'Open Camera')}
+              </button>
+            )}
+
+            {cameraError && (
+              <p className="text-xs text-red-500 mt-2">{cameraError}</p>
+            )}
+
+            {cameraOpen && (
+              <div className="flex flex-col items-center gap-3">
+                <div className="relative w-full rounded-xl overflow-hidden bg-black" style={{ maxWidth: '320px', margin: '0 auto' }}>
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="w-full rounded-xl"
+                    style={{ transform: 'scaleX(-1)' }}
+                  />
+                </div>
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={capturePhoto}
+                    className="flex items-center gap-2 py-2 px-4 rounded-lg bg-primary-800 text-white font-semibold text-sm hover:bg-primary-900 transition-colors"
+                    style={{ minHeight: '40px' }}
+                  >
+                    <Camera className="w-4 h-4" />
+                    {t('register.capture', 'Capture')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={stopCamera}
+                    className="flex items-center gap-2 py-2 px-4 rounded-lg bg-gray-200 text-gray-700 font-semibold text-sm hover:bg-gray-300 transition-colors"
+                    style={{ minHeight: '40px' }}
+                  >
+                    {t('common.cancel', 'Cancel')}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {faceImage && (
+              <div className="flex flex-col items-center gap-3">
+                <div className="relative w-32 h-32 rounded-full overflow-hidden border-4 border-primary-200 shadow-md">
+                  <img
+                    src={faceImage}
+                    alt={t('register.facePreview', 'Captured face')}
+                    className="w-full h-full object-cover"
+                    style={{ transform: 'scaleX(-1)' }}
+                  />
+                </div>
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={retakePhoto}
+                    className="flex items-center gap-2 py-2 px-4 rounded-lg bg-gray-200 text-gray-700 font-semibold text-sm hover:bg-gray-300 transition-colors"
+                    style={{ minHeight: '40px' }}
+                  >
+                    <Camera className="w-4 h-4" />
+                    {t('register.retake', 'Retake')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFaceImage('')}
+                    className="flex items-center gap-2 py-2 px-4 rounded-lg bg-red-100 text-red-700 font-semibold text-sm hover:bg-red-200 transition-colors"
+                    style={{ minHeight: '40px' }}
+                  >
+                    {t('register.removePhoto', 'Remove')}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Hidden canvas for capturing snapshot */}
+            <canvas ref={canvasRef} className="hidden" />
           </div>
 
           <hr className="border-gray-200" />

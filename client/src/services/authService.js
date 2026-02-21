@@ -30,3 +30,22 @@ export const getMe = () => api.get('/auth/me').then((res) => res.data);
  */
 export const updateProfile = (data) =>
   api.put('/auth/profile', data).then((res) => res.data);
+
+// ─── WebAuthn Biometric ───
+
+export const webauthnRegisterOptions = () =>
+  api.post('/auth/webauthn/register-options').then((res) => res.data);
+
+export const webauthnRegisterVerify = (data) =>
+  api.post('/auth/webauthn/register-verify', data).then((res) => res.data);
+
+export const webauthnLoginOptions = () =>
+  api.post('/auth/webauthn/login-options').then((res) => res.data);
+
+export const webauthnLoginVerify = (data) =>
+  api.post('/auth/webauthn/login-verify', data).then((res) => res.data);
+
+// ─── Face Login ───
+
+export const faceLogin = (faceImage) =>
+  api.post('/auth/face-login', { faceImage }).then((res) => res.data);

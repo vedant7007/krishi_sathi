@@ -1,5 +1,7 @@
 const AlertLog = require('../models/AlertLog');
 const User = require('../models/User');
+const { broadcastAlert } = require('../utils/twilio');
+const { translateBatch } = require('../utils/gemini');
 
 // POST /api/emergency/alert (admin only)
 exports.createAlert = async (req, res, next) => {
@@ -75,23 +77,63 @@ exports.createAlert = async (req, res, next) => {
       status: 'pending',
     });
 
+    // --- Twilio broadcasting ---
+    // Determine which channel names to broadcast on
+    const alertChannels = [];
+    const ch = channels || { sms: true, whatsapp: false, voice: false };
+    if (ch.sms) alertChannels.push('sms');
+    if (ch.whatsapp) alertChannels.push('whatsapp');
+    if (ch.voice) alertChannels.push('voice');
+
+    // Query for the actual user documents (phone + alertPreferences) to pass to Twilio
+    const recipients = await User.find(
+      conditions.length > 0 ? userFilter : {},
+      'phone alertPreferences'
+    ).lean();
+
+    const broadcastResult = await broadcastAlert(
+      {
+        title,
+        message,
+        severity,
+        channels: alertChannels,
+      },
+      recipients
+    );
+
+    // Update the persisted alert with delivery results
+    alert.status = broadcastResult.failed === 0 ? 'sent' : 'partial';
+    alert.deliverySummary = {
+      sent: broadcastResult.sent,
+      failed: broadcastResult.failed,
+    };
+    await alert.save();
+
+    console.log(
+      `[Emergency] Alert "${title}" broadcast complete — sent: ${broadcastResult.sent}, failed: ${broadcastResult.failed}`
+    );
+
     res.status(201).json({
       success: true,
       data: {
         alert,
         recipientCount,
+        delivery: {
+          sent: broadcastResult.sent,
+          failed: broadcastResult.failed,
+        },
       },
-      message: `Alert created successfully. ${recipientCount} farmers will be notified.`,
+      message: `Alert created and broadcast successfully. ${broadcastResult.sent} messages sent, ${broadcastResult.failed} failed.`,
     });
   } catch (error) {
     next(error);
   }
 };
 
-// GET /api/emergency/alerts
+// GET /api/emergency/alerts?lang=hi
 exports.getAlerts = async (req, res) => {
   try {
-    const { type, severity, limit } = req.query;
+    const { type, severity, limit, lang } = req.query;
 
     const filter = {};
     if (type) filter.type = type;
@@ -104,13 +146,20 @@ exports.getAlerts = async (req, res) => {
       .limit(limitNum)
       .populate('sentBy', 'name phone');
 
+    let alertsData = alerts.map((a) => (a.toObject ? a.toObject() : a));
+
+    // Batch-translate all alerts in a SINGLE Gemini call
+    if (lang && lang !== 'en' && alertsData.length > 0) {
+      alertsData = await translateBatch(alertsData, ['title', 'message'], lang);
+    }
+
     res.json({
       success: true,
       data: {
-        alerts,
-        count: alerts.length,
+        alerts: alertsData,
+        count: alertsData.length,
       },
-      message: `Found ${alerts.length} alerts`,
+      message: `Found ${alertsData.length} alerts`,
     });
   } catch (error) {
     res.status(500).json({

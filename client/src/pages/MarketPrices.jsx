@@ -15,6 +15,11 @@ import {
   ShoppingCart,
   BarChart3,
   PackageSearch,
+  AlertTriangle,
+  Shield,
+  Scale,
+  Rocket,
+  Warehouse,
 } from 'lucide-react';
 import {
   LineChart,
@@ -106,20 +111,139 @@ function TrendArrow({ trend }) {
   return <span className="text-gray-400">&rarr;</span>;
 }
 
-function SellScore({ score, maxScore = 4 }) {
+function ConfidenceDots({ level = 'medium' }) {
+  const filled = level === 'high' ? 3 : level === 'medium' ? 2 : 1;
+  const color = level === 'high' ? 'bg-green-500' : level === 'medium' ? 'bg-amber-400' : 'bg-red-400';
   return (
     <div className="flex items-center gap-1">
-      {Array.from({ length: maxScore }, (_, i) => (
-        <div
-          key={i}
-          className={`w-3 h-3 rounded-full ${
-            i < score ? 'bg-primary-800' : 'bg-gray-200'
-          }`}
-        />
+      {[1, 2, 3].map((i) => (
+        <div key={i} className={`w-2.5 h-2.5 rounded-full ${i <= filled ? color : 'bg-gray-200'}`} />
       ))}
-      <span className="text-xs text-gray-500 ml-1">{score}/{maxScore}</span>
     </div>
   );
+}
+
+/**
+ * Analyze market data and return probability-based recommendation
+ * with strategy modes instead of binary sell/hold.
+ */
+function analyzeMarket({ topPrice, msp, chartData, historyStats, t }) {
+  const analysis = {
+    trendDirection: 'stable',
+    trendProbability: 50,
+    confidence: 'medium',
+    priceRangeLow: topPrice,
+    priceRangeHigh: topPrice,
+    reasons: [],
+    strategies: [],
+  };
+
+  // --- Trend detection from chart data ---
+  if (chartData && chartData.length >= 3) {
+    const prices = chartData.map((d) => d.price).filter(Boolean);
+    if (prices.length >= 3) {
+      const recent3 = prices.slice(-3);
+      const recent7 = prices.slice(-7);
+      const avgRecent3 = recent3.reduce((a, b) => a + b, 0) / recent3.length;
+      const avgAll = prices.reduce((a, b) => a + b, 0) / prices.length;
+      const diff = avgRecent3 - avgAll;
+      const pctChange = ((diff / avgAll) * 100);
+
+      if (pctChange > 3) {
+        analysis.trendDirection = 'rising';
+        analysis.trendProbability = Math.min(85, 55 + Math.round(pctChange * 3));
+      } else if (pctChange < -3) {
+        analysis.trendDirection = 'falling';
+        analysis.trendProbability = Math.min(85, 55 + Math.round(Math.abs(pctChange) * 3));
+      } else {
+        analysis.trendDirection = 'stable';
+        analysis.trendProbability = 45 + Math.round(Math.random() * 10);
+      }
+
+      // Confidence from data amount
+      analysis.confidence = prices.length >= 10 ? 'high' : prices.length >= 5 ? 'medium' : 'low';
+
+      // 7-day price range estimation
+      const volatility = Math.max(...prices) - Math.min(...prices);
+      const halfSwing = Math.round(volatility * 0.4);
+      analysis.priceRangeLow = Math.round(topPrice - halfSwing);
+      analysis.priceRangeHigh = Math.round(topPrice + halfSwing);
+    }
+  }
+
+  // --- Reasons ---
+  if (msp) {
+    const mspDiff = (((topPrice - msp) / msp) * 100).toFixed(0);
+    if (topPrice > msp) {
+      analysis.reasons.push(t('prices.reason_aboveMsp', { pct: mspDiff, msp, defaultValue: `Current price is ${mspDiff}% above MSP (₹${msp})` }));
+    } else {
+      analysis.reasons.push(t('prices.reason_belowMsp', { pct: Math.abs(mspDiff), msp, defaultValue: `Current price is ${Math.abs(mspDiff)}% below MSP (₹${msp})` }));
+    }
+  }
+
+  if (analysis.trendDirection === 'falling') {
+    analysis.reasons.push(
+      t('prices.reason_falling', {
+        pct: analysis.trendProbability,
+        defaultValue: `Based on 14-day trend, prices show a ${analysis.trendProbability}% probability of further decline`,
+      })
+    );
+  } else if (analysis.trendDirection === 'rising') {
+    analysis.reasons.push(
+      t('prices.reason_rising', {
+        pct: analysis.trendProbability,
+        defaultValue: `Based on 14-day trend, prices show a ${analysis.trendProbability}% probability of continued increase`,
+      })
+    );
+  } else {
+    analysis.reasons.push(t('prices.reason_stable', 'Market is relatively stable with no strong directional signal'));
+  }
+
+  if (historyStats?.avg) {
+    const avg = Math.round(historyStats.avg);
+    analysis.reasons.push(t('prices.reason_avg', { avg, defaultValue: `14-day average price: ₹${avg}/quintal` }));
+  }
+
+  // --- Strategy modes ---
+  const isFalling = analysis.trendDirection === 'falling';
+  const isRising = analysis.trendDirection === 'rising';
+  const aboveMsp = msp ? topPrice > msp : true;
+
+  // Conservative
+  analysis.strategies.push({
+    mode: 'conservative',
+    icon: Shield,
+    label: t('prices.strategy_conservative', 'Conservative'),
+    action: isFalling || !aboveMsp
+      ? t('prices.strategy_conservative_sell', 'Sell now to lock in current price and reduce risk')
+      : t('prices.strategy_conservative_partial', 'Sell 70-80% now, keep 20-30% for upside'),
+    expected: `₹${analysis.priceRangeLow} – ₹${topPrice}`,
+    highlight: isFalling,
+  });
+
+  // Balanced
+  analysis.strategies.push({
+    mode: 'balanced',
+    icon: Scale,
+    label: t('prices.strategy_balanced', 'Balanced'),
+    action: t('prices.strategy_balanced_action', 'Sell 50% at current price, store remaining 50%'),
+    expected: `₹${analysis.priceRangeLow} – ₹${analysis.priceRangeHigh}`,
+    highlight: !isFalling && !isRising,
+  });
+
+  // Aggressive
+  analysis.strategies.push({
+    mode: 'aggressive',
+    icon: Rocket,
+    label: t('prices.strategy_aggressive', 'Aggressive'),
+    action: isRising
+      ? t('prices.strategy_aggressive_hold', 'Hold fully — prices trending up, potential rebound')
+      : t('prices.strategy_aggressive_wait', 'Hold and wait for better prices (higher risk)'),
+    expected: `₹${Math.round(analysis.priceRangeLow * 0.95)} – ₹${Math.round(analysis.priceRangeHigh * 1.05)}`,
+    highlight: isRising,
+  });
+
+  return analysis;
 }
 
 function EmptyPriceState({ t }) {
@@ -486,82 +610,150 @@ export default function MarketPrices() {
               </div>
             )}
 
-            {/* Sell Recommendation */}
-            {sellRec && (
-              <div
-                className={`card border-2 ${
-                  sellRec.shouldSell
-                    ? 'border-primary-500 bg-green-50'
-                    : 'border-accent-400 bg-accent-50'
-                }`}
-              >
-                <h2 className="section-title mb-2 flex items-center gap-2">
-                  <ShoppingCart className="w-5 h-5" />
-                  {t('prices.sellRecommendation')}
-                </h2>
+            {/* Smart Market Analysis — Probability-based with Strategy Modes */}
+            {prices.length > 0 && (() => {
+              const topPrice = Number(prices[0]?.modal_price || prices[0]?.price || 0);
+              const msp = mspPrice || MSP_MAP[crop];
+              const analysis = analyzeMarket({ topPrice, msp, chartData, historyStats, t });
+              const trendColor = analysis.trendDirection === 'rising' ? 'text-green-700' : analysis.trendDirection === 'falling' ? 'text-red-600' : 'text-amber-600';
+              const trendBg = analysis.trendDirection === 'rising' ? 'bg-green-100' : analysis.trendDirection === 'falling' ? 'bg-red-100' : 'bg-amber-100';
+              const TrendIcn = analysis.trendDirection === 'rising' ? ArrowUpRight : analysis.trendDirection === 'falling' ? ArrowDownRight : Minus;
 
-                <div className="flex items-center justify-between mb-3">
-                  {/* shouldSell badge */}
-                  <span
-                    className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-bold ${
-                      sellRec.shouldSell
-                        ? 'bg-green-200 text-green-900'
-                        : 'bg-yellow-200 text-yellow-900'
-                    }`}
-                  >
-                    {sellRec.shouldSell
-                      ? t('prices.sellNow')
-                      : t('prices.holdAdvice')}
-                  </span>
-                  <SellScore
-                    score={sellRec.score ?? 2}
-                    maxScore={4}
-                  />
-                </div>
+              return (
+                <div className="card border-2 border-gray-200 space-y-4">
+                  {/* Header */}
+                  <h2 className="section-title flex items-center gap-2">
+                    <BarChart3 className="w-5 h-5 text-primary-800" />
+                    {t('prices.marketAnalysis', 'Market Analysis')}
+                  </h2>
 
-                {sellRec.recommendation && (
-                  <p className="text-sm text-gray-700 mb-3 bg-white/60 rounded-lg p-2">
-                    {sellRec.recommendation}
-                  </p>
-                )}
+                  {/* Trend + Confidence + Range */}
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className={`rounded-xl p-3 text-center ${trendBg}`}>
+                      <TrendIcn className={`w-5 h-5 mx-auto mb-1 ${trendColor}`} />
+                      <p className={`text-sm font-bold capitalize ${trendColor}`}>
+                        {t(`prices.trend_${analysis.trendDirection}`, analysis.trendDirection)}
+                      </p>
+                      <p className="text-[10px] text-gray-500 mt-0.5">{t('prices.trend', 'Trend')}</p>
+                    </div>
+                    <div className="rounded-xl p-3 text-center bg-gray-50">
+                      <div className="flex justify-center mb-1">
+                        <ConfidenceDots level={analysis.confidence} />
+                      </div>
+                      <p className="text-sm font-bold text-gray-800 capitalize">{t(`prices.conf_${analysis.confidence}`, analysis.confidence)}</p>
+                      <p className="text-[10px] text-gray-500 mt-0.5">{t('prices.confidence', 'Confidence')}</p>
+                    </div>
+                    <div className="rounded-xl p-3 text-center bg-blue-50">
+                      <p className="text-sm font-bold text-blue-800">{'\u20B9'}{analysis.priceRangeLow}</p>
+                      <p className="text-[10px] text-blue-600">–</p>
+                      <p className="text-sm font-bold text-blue-800">{'\u20B9'}{analysis.priceRangeHigh}</p>
+                      <p className="text-[10px] text-gray-500">{t('prices.range7d', '7-day est.')}</p>
+                    </div>
+                  </div>
 
-                {(sellRec.currentPrice || sellRec.avg7d) && (
-                  <div className="flex items-center gap-4 mb-3">
-                    {sellRec.currentPrice && (
-                      <div>
-                        <p className="text-xs text-gray-500">{t('prices.currentPrice')}</p>
-                        <p className="font-bold text-gray-900">{'\u20B9'}{sellRec.currentPrice}</p>
+                  {/* Probability Statement */}
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <p className="text-sm text-gray-800 leading-relaxed">
+                      {analysis.trendDirection === 'falling'
+                        ? t('prices.prob_falling', { pct: analysis.trendProbability, defaultValue: `Based on 14-day trend data, prices show a ${analysis.trendProbability}% probability of further decline.` })
+                        : analysis.trendDirection === 'rising'
+                        ? t('prices.prob_rising', { pct: analysis.trendProbability, defaultValue: `Based on 14-day trend data, prices show a ${analysis.trendProbability}% probability of continued increase.` })
+                        : t('prices.prob_stable', 'Market shows no strong directional signal. Prices are relatively stable.')}
+                    </p>
+                  </div>
+
+                  {/* Data Points */}
+                  <div className="flex flex-wrap gap-3">
+                    <div className="flex items-center gap-2 bg-white border border-gray-100 rounded-lg px-3 py-2">
+                      <span className="text-xs text-gray-500">{t('prices.bestPrice', 'Best Price')}</span>
+                      <span className="font-bold text-gray-900">{'\u20B9'}{topPrice}</span>
+                    </div>
+                    {msp && (
+                      <div className="flex items-center gap-2 bg-white border border-gray-100 rounded-lg px-3 py-2">
+                        <span className="text-xs text-gray-500">MSP</span>
+                        <span className="font-bold text-gray-900">{'\u20B9'}{msp}</span>
                       </div>
                     )}
-                    {sellRec.avg7d && (
-                      <div>
-                        <p className="text-xs text-gray-500">{t('prices.weekAvg')}</p>
-                        <p className="font-bold text-gray-900">{'\u20B9'}{sellRec.avg7d}</p>
+                    {msp && (
+                      <div className="flex items-center gap-2 bg-white border border-gray-100 rounded-lg px-3 py-2">
+                        <span className="text-xs text-gray-500">{t('prices.vsMsp', 'vs MSP')}</span>
+                        <span className={`font-bold ${topPrice >= msp ? 'text-green-700' : 'text-red-600'}`}>
+                          {topPrice >= msp ? '+' : ''}{(((topPrice - msp) / msp) * 100).toFixed(0)}%
+                        </span>
                       </div>
                     )}
                   </div>
-                )}
 
-                {sellRec.reasons && sellRec.reasons.length > 0 && (
-                  <>
-                    <p className="text-xs font-semibold text-gray-500 uppercase mb-1">
-                      {t('prices.reasons')}
-                    </p>
-                    <ul className="space-y-1">
-                      {sellRec.reasons.map((reason, i) => (
-                        <li
-                          key={i}
-                          className="text-sm text-gray-700 flex items-start gap-2"
-                        >
-                          <span className="text-gray-400 mt-1">&#8226;</span>
+                  {/* Analysis Reasons */}
+                  <div>
+                    <p className="text-xs font-semibold text-gray-500 uppercase mb-2">{t('prices.analysisPoints', 'Analysis')}</p>
+                    <ul className="space-y-1.5">
+                      {analysis.reasons.map((reason, i) => (
+                        <li key={i} className="text-sm text-gray-700 flex items-start gap-2">
+                          <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-primary-800 flex-shrink-0" />
                           {reason}
                         </li>
                       ))}
                     </ul>
-                  </>
-                )}
-              </div>
-            )}
+                  </div>
+
+                  {/* Strategy Modes */}
+                  <div>
+                    <p className="text-xs font-semibold text-gray-500 uppercase mb-2">{t('prices.strategyOptions', 'Strategy Options')}</p>
+                    <div className="space-y-2">
+                      {analysis.strategies.map((s) => {
+                        const SIcon = s.icon;
+                        return (
+                          <div
+                            key={s.mode}
+                            className={`rounded-xl border-2 p-3 transition-all ${
+                              s.highlight
+                                ? 'border-primary-400 bg-primary-50'
+                                : 'border-gray-100 bg-white'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 mb-1">
+                              <SIcon className={`w-4 h-4 flex-shrink-0 ${s.highlight ? 'text-primary-800' : 'text-gray-500'}`} />
+                              <span className="text-sm font-bold text-gray-900">{s.label}</span>
+                              {s.highlight && (
+                                <span className="text-[10px] bg-primary-200 text-primary-900 px-1.5 py-0.5 rounded-full font-semibold">
+                                  {t('prices.recommended', 'Recommended')}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-sm text-gray-600 mb-1">{s.action}</p>
+                            <p className="text-xs text-gray-400">{t('prices.expectedRange', 'Expected')}: {s.expected}</p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Storage Cost Hint */}
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex gap-2">
+                    <Warehouse className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-sm font-semibold text-amber-800">{t('prices.storageTip', 'Storage Tip')}</p>
+                      <p className="text-xs text-amber-700 mt-0.5">
+                        {t('prices.storageHint', 'If holding, factor in storage cost (~₹15-25/quintal/day). Holding for 7 days adds ₹105-175 to your cost basis.')}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Risk Warning */}
+                  <div className="bg-gray-100 rounded-lg p-3 flex gap-2">
+                    <AlertTriangle className="w-4 h-4 text-gray-500 flex-shrink-0 mt-0.5" />
+                    <p className="text-xs text-gray-500 leading-relaxed">
+                      {t('prices.riskWarning', 'Market predictions are probabilistic. Unexpected policy changes, weather events, or supply disruptions may impact actual prices. This analysis is for informational purposes only.')}
+                    </p>
+                  </div>
+
+                  <p className="text-[10px] text-gray-400 text-right">
+                    {t('prices.basedOn', 'Based on 14-day historical data & MSP comparison')}
+                  </p>
+                </div>
+              );
+            })()}
 
             {/* Nearby Mandis Comparison */}
             {prices.length > 1 && (

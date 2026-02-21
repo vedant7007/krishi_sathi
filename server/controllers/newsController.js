@@ -1,22 +1,19 @@
 const News = require('../models/News');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-const { translateJSON } = require('../utils/gemini');
+const { translateBatch } = require('../utils/gemini');
 
-// GET /api/news?category=market&language=en&page=1&limit=10
+// GET /api/news?category=market&lang=hi&page=1&limit=10
 exports.getNews = async (req, res) => {
   try {
-    const { category, language, page, limit, region } = req.query;
+    const { category, page, limit, region, lang } = req.query;
 
     const pageNum = parseInt(page, 10) || 1;
-    const limitNum = Math.min(parseInt(limit, 10) || 10, 50); // Cap at 50
+    const limitNum = Math.min(parseInt(limit, 10) || 10, 50);
     const skip = (pageNum - 1) * limitNum;
 
     const filter = {};
     if (category) filter.category = category.toLowerCase();
-    if (language) filter.language = language.toLowerCase();
     if (region) filter.region = new RegExp(region, 'i');
-
-    const lang = req.query.lang;
 
     const [news, total] = await Promise.all([
       News.find(filter)
@@ -28,48 +25,23 @@ exports.getNews = async (req, res) => {
     ]);
 
     const totalPages = Math.ceil(total / limitNum);
-
-    // Translate if requested language differs from content language
     let newsData = news.map((n) => n.toObject ? n.toObject() : n);
+
+    // Batch-translate all articles in a SINGLE Gemini call
     if (lang && lang !== 'en' && newsData.length > 0) {
-      try {
-        const textsToTranslate = newsData.map((n) => ({
-          title: n.title || '',
-          summary: n.summary || '',
-          content: n.content || '',
-        }));
-        const translated = await translateJSON(textsToTranslate, lang);
-        if (Array.isArray(translated)) {
-          newsData = newsData.map((n, i) => ({
-            ...n,
-            title: translated[i]?.title || n.title,
-            summary: translated[i]?.summary || n.summary,
-            content: translated[i]?.content || n.content,
-          }));
-        }
-      } catch { /* use untranslated */ }
+      newsData = await translateBatch(newsData, ['title', 'summary', 'content'], lang);
     }
 
     res.json({
       success: true,
       data: {
         news: newsData,
-        pagination: {
-          page: pageNum,
-          limit: limitNum,
-          total,
-          totalPages,
-          hasNextPage: pageNum < totalPages,
-          hasPrevPage: pageNum > 1,
-        },
+        pagination: { page: pageNum, limit: limitNum, total, totalPages, hasNextPage: pageNum < totalPages, hasPrevPage: pageNum > 1 },
       },
       message: `Found ${newsData.length} news articles`,
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Failed to retrieve news',
-    });
+    res.status(500).json({ success: false, message: 'Failed to retrieve news' });
   }
 };
 
@@ -77,24 +49,12 @@ exports.getNews = async (req, res) => {
 exports.getNewsById = async (req, res) => {
   try {
     const article = await News.findById(req.params.id);
-
     if (!article) {
-      return res.status(404).json({
-        success: false,
-        message: 'News article not found',
-      });
+      return res.status(404).json({ success: false, message: 'News article not found' });
     }
-
-    res.json({
-      success: true,
-      data: { article },
-      message: 'News article retrieved successfully',
-    });
+    res.json({ success: true, data: { article }, message: 'News article retrieved successfully' });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Failed to retrieve news article',
-    });
+    res.status(500).json({ success: false, message: 'Failed to retrieve news article' });
   }
 };
 
@@ -128,7 +88,6 @@ Respond in this exact JSON format:
     const result = await model.generateContent(prompt);
     const text = result.response.text();
 
-    // Parse JSON from response
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       return res.status(500).json({ success: false, message: 'Failed to parse AI response' });

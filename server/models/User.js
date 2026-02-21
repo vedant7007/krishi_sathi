@@ -52,6 +52,19 @@ const userSchema = new mongoose.Schema({
     enum: ['black', 'red', 'alluvial', 'laterite', 'sandy', 'clay', 'loamy', 'saline', 'peaty', 'forest', 'mountainous'],
   },
   landHolding: { type: Number, min: 0 },
+  faceImage: {
+    type: String,
+  },
+  faceEncoding: {
+    type: [Number],
+    select: false,
+  },
+  webauthnCredentials: [{
+    credentialID: { type: String, required: true },
+    credentialPublicKey: { type: String, required: true },
+    counter: { type: Number, default: 0 },
+    transports: [String],
+  }],
   language: {
     type: String,
     enum: ['en', 'hi', 'te'],

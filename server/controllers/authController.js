@@ -8,15 +8,25 @@ const generateToken = (id, role) => {
 // POST /api/auth/register
 exports.register = async (req, res, next) => {
   try {
-    const { name, phone, password, role, district, state, primaryCrop, soilType, landHolding, language, aadhaarNumber, location, alertPreferences } = req.body;
+    const { name, phone, password, role, district, state, primaryCrop, soilType, landHolding, language, aadhaarNumber, location, alertPreferences, faceImage } = req.body;
 
     const existingUser = await User.findOne({ phone });
     if (existingUser) {
       return res.status(400).json({ success: false, message: 'Phone number already registered' });
     }
 
+    // Compute face encoding if faceImage provided
+    let faceEncoding;
+    if (faceImage) {
+      try {
+        const { encodeFace } = require('./webauthnController');
+        faceEncoding = await encodeFace(faceImage);
+      } catch { /* encoding is optional */ }
+    }
+
     const user = await User.create({
-      name, phone, password, role, district, state, primaryCrop, soilType, landHolding, language, aadhaarNumber, location, alertPreferences,
+      name, phone, password, role, district, state, primaryCrop, soilType, landHolding, language, aadhaarNumber, location, alertPreferences, faceImage,
+      ...(faceEncoding ? { faceEncoding } : {}),
     });
 
     const token = generateToken(user._id, user.role);
@@ -39,6 +49,7 @@ exports.register = async (req, res, next) => {
           aadhaarNumber: user.aadhaarNumber,
           location: user.location,
           alertPreferences: user.alertPreferences,
+          faceImage: user.faceImage,
         },
       },
       message: 'Registration successful',
@@ -87,6 +98,7 @@ exports.login = async (req, res, next) => {
           aadhaarNumber: user.aadhaarNumber,
           location: user.location,
           alertPreferences: user.alertPreferences,
+          faceImage: user.faceImage,
         },
       },
       message: 'Login successful',
@@ -115,6 +127,8 @@ exports.getMe = async (req, res) => {
         aadhaarNumber: req.user.aadhaarNumber,
         location: req.user.location,
         alertPreferences: req.user.alertPreferences,
+        faceImage: req.user.faceImage,
+        webauthnCredentials: (req.user.webauthnCredentials || []).map((c) => ({ credentialID: c.credentialID })),
       },
     },
   });
@@ -123,10 +137,24 @@ exports.getMe = async (req, res) => {
 // PUT /api/auth/profile
 exports.updateProfile = async (req, res, next) => {
   try {
-    const allowed = ['name', 'district', 'state', 'primaryCrop', 'soilType', 'landHolding', 'language', 'alertPreferences', 'aadhaarNumber', 'location'];
+    const allowed = ['name', 'district', 'state', 'primaryCrop', 'soilType', 'landHolding', 'language', 'alertPreferences', 'aadhaarNumber', 'location', 'faceImage'];
     const updates = {};
     for (const key of allowed) {
       if (req.body[key] !== undefined) updates[key] = req.body[key];
+    }
+
+    // If faceImage is being saved, compute face encoding via Python service
+    if (updates.faceImage) {
+      try {
+        const { encodeFace } = require('./webauthnController');
+        const encoding = await encodeFace(updates.faceImage);
+        if (encoding) {
+          updates.faceEncoding = encoding;
+          console.log(`Face encoding computed for user ${req.user._id} (${encoding.length} dims)`);
+        }
+      } catch (encErr) {
+        console.log('Face encoding skipped:', encErr.message);
+      }
     }
 
     const user = await User.findByIdAndUpdate(req.user._id, updates, {
@@ -151,6 +179,7 @@ exports.updateProfile = async (req, res, next) => {
           aadhaarNumber: user.aadhaarNumber,
           location: user.location,
           alertPreferences: user.alertPreferences,
+          faceImage: user.faceImage,
         },
       },
       message: 'Profile updated',

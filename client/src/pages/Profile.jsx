@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useFarm } from '../context/FarmContext';
-import { updateProfile } from '../services/authService';
+import { updateProfile, webauthnRegisterOptions, webauthnRegisterVerify } from '../services/authService';
+import { startRegistration } from '@simplewebauthn/browser';
 import { translateCrop, translateSoil, translateSeason, translateState, translateConfidence, formatDate } from '../utils/translate';
 import i18n from '../i18n/i18n';
 import {
@@ -20,6 +21,9 @@ import {
   Navigation,
   Layers,
   Wheat,
+  Camera,
+  ShieldCheck,
+  Fingerprint,
 } from 'lucide-react';
 
 const CROP_OPTIONS = [
@@ -126,6 +130,19 @@ export default function Profile() {
     push: false,
   });
 
+  // Face capture state
+  const [faceImage, setFaceImage] = useState('');
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [cameraError, setCameraError] = useState('');
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const streamRef = useRef(null);
+
+  // Biometric (WebAuthn) state
+  const [biometricRegistered, setBiometricRegistered] = useState(false);
+  const [biometricLoading, setBiometricLoading] = useState(false);
+  const [biometricMsg, setBiometricMsg] = useState('');
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -156,6 +173,10 @@ export default function Profile() {
         voice: user.alertPreferences?.voice ?? false,
         push: user.alertPreferences?.push ?? false,
       });
+      if (user.faceImage) setFaceImage(user.faceImage);
+      if (user.webauthnCredentials && user.webauthnCredentials.length > 0) {
+        setBiometricRegistered(true);
+      }
     }
   }, [user, language]);
 
@@ -236,6 +257,69 @@ export default function Profile() {
     );
   };
 
+  const openCamera = useCallback(async () => {
+    setCameraError('');
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+      });
+      streamRef.current = stream;
+      setCameraOpen(true);
+      setTimeout(() => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.play();
+        }
+      }, 100);
+    } catch {
+      setCameraError(t('register.cameraError', 'Could not access camera. Please allow camera permission.'));
+    }
+  }, [t]);
+
+  const stopCamera = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+    setCameraOpen(false);
+  }, []);
+
+  const capturePhoto = useCallback(() => {
+    if (!videoRef.current || !canvasRef.current) return;
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+    setFaceImage(dataUrl);
+    stopCamera();
+  }, [stopCamera]);
+
+  const retakePhoto = useCallback(() => {
+    setFaceImage('');
+    openCamera();
+  }, [openCamera]);
+
+  const handleBiometricRegister = async () => {
+    setBiometricLoading(true);
+    setBiometricMsg('');
+    try {
+      const optionsRes = await webauthnRegisterOptions();
+      const attResp = await startRegistration({ optionsJSON: optionsRes.data });
+      await webauthnRegisterVerify(attResp);
+      setBiometricRegistered(true);
+      setBiometricMsg(t('profile.biometricSuccess', 'Biometric registered! You can now login with fingerprint/Face ID.'));
+    } catch (err) {
+      setBiometricMsg(
+        err?.response?.data?.message || err?.message || t('profile.biometricError', 'Failed to register biometric. Try again.')
+      );
+    } finally {
+      setBiometricLoading(false);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -253,6 +337,8 @@ export default function Profile() {
         language: form.language,
         alertPreferences: alertPrefs,
       };
+
+      if (faceImage) payload.faceImage = faceImage;
 
       if (form.aadhaarNumber) {
         payload.aadhaarNumber = form.aadhaarNumber;
@@ -300,9 +386,15 @@ export default function Profile() {
           <div className="card space-y-4">
             {/* Avatar */}
             <div className="flex items-center gap-4 pb-4 border-b border-gray-100">
-              <div className="w-16 h-16 rounded-full bg-primary-100 flex items-center justify-center">
-                <User className="w-8 h-8 text-primary-800" />
-              </div>
+              {faceImage ? (
+                <div className="w-16 h-16 rounded-full overflow-hidden border-2 border-primary-200 shadow flex-shrink-0">
+                  <img src={faceImage} alt="Face" className="w-full h-full object-cover" style={{ transform: 'scaleX(-1)' }} />
+                </div>
+              ) : (
+                <div className="w-16 h-16 rounded-full bg-primary-100 flex items-center justify-center flex-shrink-0">
+                  <User className="w-8 h-8 text-primary-800" />
+                </div>
+              )}
               <div>
                 <p className="font-bold text-gray-900 text-lg">
                   {form.name || t('profile.title')}
@@ -314,6 +406,149 @@ export default function Profile() {
                   </p>
                 )}
               </div>
+            </div>
+
+            {/* Face Photo Section */}
+            <div className="pb-4 border-b border-gray-100">
+              <div className="flex items-center gap-2 mb-3">
+                <ShieldCheck className="w-4 h-4 text-primary-800" />
+                <h4 className="text-sm font-bold text-gray-800">
+                  {t('profile.facePhoto', 'Face Photo')}
+                </h4>
+                {faceImage && (
+                  <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-semibold">
+                    {t('profile.faceSet', 'Set')}
+                  </span>
+                )}
+              </div>
+
+              {!faceImage && !cameraOpen && (
+                <button
+                  type="button"
+                  onClick={openCamera}
+                  className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl border-2 border-dashed border-primary-300 bg-primary-50 text-primary-800 font-semibold text-sm hover:bg-primary-100 transition-colors"
+                  style={{ minHeight: '48px' }}
+                >
+                  <Camera className="w-5 h-5" />
+                  {t('profile.captureForLogin', 'Capture Face for Login Verification')}
+                </button>
+              )}
+
+              {cameraError && (
+                <p className="text-xs text-red-500 mt-2">{cameraError}</p>
+              )}
+
+              {cameraOpen && (
+                <div className="flex flex-col items-center gap-3">
+                  <div className="relative w-full rounded-xl overflow-hidden bg-black" style={{ maxWidth: '280px', margin: '0 auto' }}>
+                    <video
+                      ref={videoRef}
+                      autoPlay
+                      playsInline
+                      muted
+                      className="w-full rounded-xl"
+                      style={{ transform: 'scaleX(-1)' }}
+                    />
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                      <div className="w-28 h-36 border-2 border-dashed border-white/50 rounded-full" />
+                    </div>
+                  </div>
+                  <div className="flex gap-3">
+                    <button type="button" onClick={capturePhoto} className="btn-primary px-4 text-sm">
+                      <Camera className="w-4 h-4" />
+                      {t('register.capture', 'Capture')}
+                    </button>
+                    <button type="button" onClick={stopCamera} className="btn-outline px-4 text-sm">
+                      {t('common.cancel', 'Cancel')}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {faceImage && !cameraOpen && (
+                <div className="flex items-center gap-4">
+                  <div className="w-20 h-20 rounded-full overflow-hidden border-4 border-primary-200 shadow flex-shrink-0">
+                    <img
+                      src={faceImage}
+                      alt="Face"
+                      className="w-full h-full object-cover"
+                      style={{ transform: 'scaleX(-1)' }}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <button type="button" onClick={retakePhoto} className="flex items-center gap-1 text-sm font-semibold text-primary-800 hover:underline">
+                      <Camera className="w-4 h-4" />
+                      {t('profile.retakeFace', 'Retake Photo')}
+                    </button>
+                    <button type="button" onClick={() => setFaceImage('')} className="flex items-center gap-1 text-sm font-semibold text-red-600 hover:underline">
+                      {t('profile.removeFace', 'Remove')}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <p className="text-xs text-gray-400 mt-2">
+                {t('profile.faceHint', 'Used for face verification when you log in.')}
+              </p>
+            </div>
+
+            {/* Hidden canvas for face capture */}
+            <canvas ref={canvasRef} className="hidden" />
+
+            {/* Biometric Login Section */}
+            <div className="pb-4 border-b border-gray-100">
+              <div className="flex items-center gap-2 mb-3">
+                <Fingerprint className="w-4 h-4 text-primary-800" />
+                <h4 className="text-sm font-bold text-gray-800">
+                  {t('profile.biometricLogin', 'Biometric Login')}
+                </h4>
+                {biometricRegistered && (
+                  <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-semibold">
+                    {t('profile.enabled', 'Enabled')}
+                  </span>
+                )}
+              </div>
+
+              {biometricRegistered ? (
+                <div className="flex items-center gap-3 p-3 rounded-xl bg-green-50 border border-green-200">
+                  <Fingerprint className="w-8 h-8 text-green-600 flex-shrink-0" />
+                  <div>
+                    <p className="text-sm font-semibold text-green-800">
+                      {t('profile.biometricActive', 'Biometric login is active')}
+                    </p>
+                    <p className="text-xs text-green-600">
+                      {t('profile.biometricActiveDesc', 'You can login using fingerprint or Face ID')}
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleBiometricRegister}
+                  disabled={biometricLoading}
+                  className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl border-2 border-dashed border-accent-300 bg-accent-50 text-accent-700 font-semibold text-sm hover:bg-accent-100 transition-colors"
+                  style={{ minHeight: '48px' }}
+                >
+                  {biometricLoading ? (
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  ) : (
+                    <Fingerprint className="w-5 h-5" />
+                  )}
+                  {biometricLoading
+                    ? t('profile.settingUp', 'Setting up...')
+                    : t('profile.enableBiometric', 'Enable Fingerprint / Face ID Login')}
+                </button>
+              )}
+
+              {biometricMsg && (
+                <p className={`text-xs mt-2 ${biometricRegistered ? 'text-green-600' : 'text-red-500'}`}>
+                  {biometricMsg}
+                </p>
+              )}
+
+              <p className="text-xs text-gray-400 mt-2">
+                {t('profile.biometricHint', 'Use your device biometric (fingerprint or Face ID) to login without password.')}
+              </p>
             </div>
 
             <SectionHeader icon={User} title={t('register.personalInfo')} />

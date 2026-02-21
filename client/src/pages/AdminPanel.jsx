@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Navigate } from 'react-router-dom';
 import { useFarm } from '../context/FarmContext';
 import {
   getStats,
@@ -305,11 +306,11 @@ export default function AdminPanel() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  // Fetch stats
+  // Fetch stats — API returns { success, data: { users: {...}, cropRules, ... } }
   useEffect(() => {
     getStats()
-      .then((data) => setStats(data))
-      .catch(() => {});
+      .then((res) => setStats(res?.data || res))
+      .catch((err) => setError(err?.response?.data?.message || 'Failed to load admin stats'));
   }, []);
 
   // Fetch tab data
@@ -335,7 +336,12 @@ export default function AdminPanel() {
         default:
           data = [];
       }
-      setTabData(data?.data || data?.rules || data?.prices || data?.schemes || data?.news || data || []);
+      // Extract array from nested API response: { success, data: { cropRules: [...] } }
+      const inner = data?.data || data;
+      const arr = Array.isArray(inner)
+        ? inner
+        : inner?.cropRules || inner?.rules || inner?.prices || inner?.schemes || inner?.news || inner?.articles || [];
+      setTabData(Array.isArray(arr) ? arr : []);
     } catch (err) {
       setError(err?.response?.data?.message || t('common.error'));
     } finally {
@@ -349,6 +355,11 @@ export default function AdminPanel() {
     fetchTabData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
+
+  // Redirect non-admin users (AFTER all hooks to avoid hooks violation)
+  if (user?.role !== 'admin') {
+    return <Navigate to="/" replace />;
+  }
 
   // Handle add new
   const handleAddNew = async (formData) => {
@@ -440,12 +451,12 @@ export default function AdminPanel() {
   };
 
   const STAT_ITEMS = [
-    { icon: Users, label: 'Users', value: stats?.users, color: 'bg-blue-100 text-info' },
-    { icon: Sprout, label: 'Advisory Rules', value: stats?.advisoryRules, color: 'bg-primary-100 text-primary-800' },
-    { icon: TrendingUp, label: 'Prices', value: stats?.prices, color: 'bg-accent-50 text-accent-700' },
-    { icon: FileText, label: 'Schemes', value: stats?.schemes, color: 'bg-orange-100 text-orange-700' },
-    { icon: Newspaper, label: 'News', value: stats?.news, color: 'bg-purple-100 text-purple-700' },
-    { icon: AlertTriangle, label: 'Alerts', value: stats?.alerts, color: 'bg-red-100 text-alert-red' },
+    { icon: Users, label: 'Users', value: stats?.users?.total ?? stats?.users, color: 'bg-blue-100 text-info' },
+    { icon: Sprout, label: 'Advisory Rules', value: stats?.cropRules ?? stats?.advisoryRules, color: 'bg-primary-100 text-primary-800' },
+    { icon: TrendingUp, label: 'Prices', value: stats?.marketPrices ?? stats?.prices, color: 'bg-accent-50 text-accent-700' },
+    { icon: FileText, label: 'Schemes', value: stats?.schemes?.total ?? stats?.schemes, color: 'bg-orange-100 text-orange-700' },
+    { icon: Newspaper, label: 'News', value: stats?.news?.total ?? stats?.news, color: 'bg-purple-100 text-purple-700' },
+    { icon: AlertTriangle, label: 'Alerts', value: stats?.alerts?.total ?? stats?.alerts, color: 'bg-red-100 text-alert-red' },
   ];
 
   return (

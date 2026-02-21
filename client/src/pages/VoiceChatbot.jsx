@@ -1,699 +1,278 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useFarm } from '../context/FarmContext';
-import { sendChatMessage, getSTTToken, getTTSAudio } from '../services/chatService';
-import { getWeather } from '../services/weatherService';
-import { getPrices } from '../services/priceService';
-import { Mic, MicOff, Send, Loader2, Volume2, VolumeX, User, Bot, Headphones } from 'lucide-react';
-import VoiceAgentPanel from '../components/VoiceAgent/VoiceAgentPanel';
+import useVoiceAgent from '../hooks/useVoiceAgent';
+import MicButton from '../components/VoiceAgent/MicButton';
+import QuickChips from '../components/VoiceAgent/QuickChips';
+import { User, Bot, AlertCircle, Send, Keyboard, X, ChevronDown } from 'lucide-react';
 
-// --------------- Constants ---------------
+const SOURCE_ICONS = {
+  advisory: '\uD83C\uDF3E',
+  weather: '\u2600\uFE0F',
+  prices: '\uD83D\uDCB0',
+  schemes: '\uD83C\uDFE8',
+  general: '\uD83D\uDCAC',
+};
 
-/** Deepgram language codes (STT) */
-const DEEPGRAM_LANG = { en: 'en', hi: 'hi', te: 'te' };
+const greetings = {
+  en: 'Hi! I\'m KrishiSathi AI.\nTap the mic and ask me anything about farming.',
+  hi: 'Namaste! Main KrishiSathi AI hoon.\nMic dabayein aur kheti ke baare mein poochiye.',
+  te: 'Namaskaram! Nenu KrishiSathi AI.\nMic noppi vyavasayam gurinchi adagandi.',
+};
 
-/** BCP-47 tags used as fallback for browser SpeechSynthesis */
-const BROWSER_LANG = { en: 'en-IN', hi: 'hi-IN', te: 'te-IN' };
+const placeholders = {
+  en: 'Type your question...',
+  hi: 'Sawal likhen...',
+  te: 'Prashna raayandi...',
+};
 
-/** Number of past messages to send as conversation memory */
-const HISTORY_WINDOW = 10;
+const statusLabels = {
+  idle: { en: 'Tap to speak', hi: 'Bolne ke liye dabaiye', te: 'Matlaadataniki noppandi' },
+  listening: { en: 'Listening... tap to stop', hi: 'Sun raha hoon... rokne ke liye dabaiye', te: 'Vintunnanu... aapataniki noppandi' },
+  processing: { en: 'Thinking...', hi: 'Soch raha hoon...', te: 'Aalochistunnanu...' },
+  speaking: { en: 'Speaking... tap to stop', hi: 'Bol raha hoon... rokne ke liye dabaiye', te: 'Cheptunnanu... aapataniki noppandi' },
+};
 
-// --------------- Helpers ---------------
+export default function VoiceChatbot() {
+  const { t } = useTranslation();
+  const { language } = useFarm();
+  const messagesEndRef = useRef(null);
+  const [textInput, setTextInput] = useState('');
+  const [showTextInput, setShowTextInput] = useState(false);
 
-function detectIntent(text) {
-  const lower = text.toLowerCase();
-  if (
-    lower.includes('weather') ||
-    lower.includes('rain') ||
-    lower.includes('temperature') ||
-    lower.includes('mausam') ||
-    lower.includes('barish') ||
-    lower.includes('vaatavaranam') ||
-    lower.includes('varsham')
-  ) {
-    return 'weather';
-  }
-  if (
-    lower.includes('price') ||
-    lower.includes('mandi') ||
-    lower.includes('sell') ||
-    lower.includes('daam') ||
-    lower.includes('bhav') ||
-    lower.includes('dhara') ||
-    lower.includes('market')
-  ) {
-    return 'prices';
-  }
-  if (
-    lower.includes('advisory') ||
-    lower.includes('advice') ||
-    lower.includes('crop') ||
-    lower.includes('fertilizer') ||
-    lower.includes('pest') ||
-    lower.includes('fasal') ||
-    lower.includes('khad') ||
-    lower.includes('panta') ||
-    lower.includes('salaha')
-  ) {
-    return 'advisory';
-  }
-  if (
-    lower.includes('scheme') ||
-    lower.includes('government') ||
-    lower.includes('yojana') ||
-    lower.includes('subsidy') ||
-    lower.includes('sarkar') ||
-    lower.includes('pathakam') ||
-    lower.includes('prabhutva')
-  ) {
-    return 'schemes';
-  }
-  return 'general';
-}
+  const {
+    status,
+    transcript,
+    interimTranscript,
+    messages,
+    error,
+    startListening,
+    stopListening,
+    sendQuickQuery,
+    sendTextQuery,
+    stopSpeaking,
+  } = useVoiceAgent(language);
 
-// --------------- Audio Waveform Indicator ---------------
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, interimTranscript]);
 
-function WaveformIndicator() {
+  const handleMicTap = () => {
+    if (status === 'listening') stopListening();
+    else if (status === 'speaking') stopSpeaking();
+    else if (status === 'idle') startListening();
+  };
+
+  const handleTextSend = () => {
+    const text = textInput.trim();
+    if (!text) return;
+    setTextInput('');
+    sendTextQuery(text);
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleTextSend();
+    }
+  };
+
+  const isBusy = status === 'processing' || status === 'speaking';
+  const label = statusLabels[status]?.[language] || statusLabels[status]?.en || '';
+  const hasMessages = messages.length > 0;
+
   return (
-    <div className="flex items-center justify-center gap-[3px] h-6" aria-hidden="true">
-      {[0, 1, 2, 3, 4].map((i) => (
-        <span
-          key={i}
-          className="inline-block w-[3px] rounded-full bg-alert-red"
-          style={{
-            animation: `waveform 1s ease-in-out ${i * 0.15}s infinite`,
-          }}
-        />
-      ))}
-      {/* Inject keyframes once via a <style> tag scoped to this component tree */}
+    <div className="flex flex-col h-screen bg-gradient-to-b from-[#0B3D2E] via-[#145A3C] to-[#1B7A4E] text-white">
+
+      {/* ─── Voice Hero Section ─── */}
+      <div className={`flex flex-col items-center justify-center px-6 transition-all duration-500 ${hasMessages ? 'pt-6 pb-3' : 'flex-1'}`}>
+
+        {/* Brand */}
+        <div className="flex items-center gap-2 mb-4">
+          <span className="text-2xl">{'\uD83C\uDF3E'}</span>
+          <h1 className="text-xl font-bold tracking-tight">KrishiSathi AI</h1>
+        </div>
+
+        {/* Mic button with animated orbs */}
+        <div className="relative mb-3">
+          {status === 'listening' && (
+            <>
+              <span className="absolute inset-[-20px] rounded-full bg-white/10 animate-[orb-pulse_2s_ease-in-out_infinite]" />
+              <span className="absolute inset-[-40px] rounded-full bg-white/5 animate-[orb-pulse_2s_ease-in-out_0.6s_infinite]" />
+            </>
+          )}
+          {status === 'speaking' && (
+            <span className="absolute inset-[-14px] rounded-full bg-blue-400/20 animate-[orb-pulse_1.5s_ease-in-out_infinite]" />
+          )}
+          {status === 'processing' && (
+            <span className="absolute inset-[-14px] rounded-full bg-amber-400/15 animate-[orb-pulse_1s_ease-in-out_infinite]" />
+          )}
+          <MicButton status={status} language={language} onTap={handleMicTap} />
+        </div>
+
+        {/* Status label */}
+        <p className={`text-sm font-medium mb-3 transition-colors ${
+          status === 'listening' ? 'text-red-300 animate-pulse' :
+          status === 'processing' ? 'text-yellow-300' :
+          status === 'speaking' ? 'text-blue-300' :
+          'text-white/50'
+        }`}>
+          {label}
+        </p>
+
+        {/* Live transcription bubble */}
+        {(status === 'listening' || status === 'processing') && (interimTranscript || transcript) && (
+          <div className="w-full max-w-sm px-4 py-3 rounded-2xl bg-white/10 backdrop-blur-sm border border-white/10 mb-3 animate-[fade-in_0.2s_ease]">
+            <p className="text-sm text-white/80 italic text-center leading-relaxed">
+              {interimTranscript || transcript}
+            </p>
+          </div>
+        )}
+
+        {/* Greeting */}
+        {!hasMessages && status === 'idle' && (
+          <p className="text-sm text-white/35 text-center max-w-xs leading-relaxed whitespace-pre-line mb-5">
+            {greetings[language] || greetings.en}
+          </p>
+        )}
+
+        {/* Quick chips */}
+        {messages.length <= 2 && (
+          <div className="w-full max-w-sm">
+            <QuickChips language={language} onChipTap={sendQuickQuery} disabled={isBusy} dark />
+          </div>
+        )}
+      </div>
+
+      {/* Error */}
+      {error && (
+        <div className="mx-4 mb-2 flex items-start gap-2 px-3 py-2.5 rounded-xl bg-red-500/20 border border-red-400/30 animate-[fade-in_0.2s_ease]">
+          <AlertCircle className="w-4 h-4 text-red-300 flex-shrink-0 mt-0.5" />
+          <p className="text-xs text-red-200">{error}</p>
+        </div>
+      )}
+
+      {/* ─── Chat Messages Section ─── */}
+      {hasMessages && (
+        <div className="flex-1 flex flex-col bg-white/5 rounded-t-3xl overflow-hidden border-t border-white/10 min-h-0">
+          {/* Chat header */}
+          <div className="flex items-center justify-center gap-1.5 py-2 text-xs text-white/40">
+            <ChevronDown className="w-3.5 h-3.5" />
+            {messages.length} {messages.length === 1 ? 'message' : 'messages'}
+          </div>
+
+          {/* Messages scroll */}
+          <div className="flex-1 overflow-y-auto px-4 pb-3 space-y-3">
+            {messages.map((msg, i) => (
+              <ChatBubble key={i} message={msg} />
+            ))}
+
+            {status === 'listening' && interimTranscript && (
+              <div className="flex justify-end">
+                <div className="max-w-[80%] px-3 py-2 rounded-2xl rounded-br-sm bg-emerald-600/60 text-white/80 text-sm italic">
+                  {interimTranscript}
+                </div>
+              </div>
+            )}
+
+            {status === 'processing' && (
+              <div className="flex gap-2">
+                <div className="w-7 h-7 rounded-full bg-blue-500/20 flex items-center justify-center flex-shrink-0">
+                  <Bot className="w-3.5 h-3.5 text-blue-300" />
+                </div>
+                <div className="px-3 py-2.5 rounded-2xl rounded-bl-sm bg-white/10 border border-white/10">
+                  <div className="flex gap-1.5 items-center">
+                    <span className="w-1.5 h-1.5 rounded-full bg-white/50 animate-[bounce_1s_ease-in-out_infinite]" />
+                    <span className="w-1.5 h-1.5 rounded-full bg-white/50 animate-[bounce_1s_ease-in-out_0.15s_infinite]" />
+                    <span className="w-1.5 h-1.5 rounded-full bg-white/50 animate-[bounce_1s_ease-in-out_0.3s_infinite]" />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div ref={messagesEndRef} />
+          </div>
+        </div>
+      )}
+
+      {/* ─── Bottom Bar ─── */}
+      <div className="px-4 pb-4 pt-2 bg-black/20 backdrop-blur-sm border-t border-white/10">
+        {showTextInput ? (
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={textInput}
+              onChange={(e) => setTextInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={placeholders[language] || placeholders.en}
+              disabled={isBusy}
+              autoFocus
+              className="flex-1 px-4 py-2.5 rounded-full bg-white/10 border border-white/20 text-sm text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-emerald-400/50 focus:border-emerald-400/50 disabled:opacity-50"
+            />
+            {textInput.trim() ? (
+              <button
+                onClick={handleTextSend}
+                disabled={isBusy}
+                className="w-10 h-10 rounded-full bg-emerald-500 text-white flex items-center justify-center hover:bg-emerald-400 disabled:opacity-50 transition-all active:scale-95"
+              >
+                <Send className="w-4 h-4" />
+              </button>
+            ) : (
+              <button
+                onClick={() => setShowTextInput(false)}
+                className="w-10 h-10 rounded-full bg-white/10 text-white/60 flex items-center justify-center hover:bg-white/20 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="flex items-center justify-center">
+            <button
+              onClick={() => setShowTextInput(true)}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-white/[0.08] hover:bg-white/15 text-white/40 hover:text-white/60 text-xs transition-all"
+            >
+              <Keyboard className="w-3.5 h-3.5" />
+              {language === 'hi' ? 'Type karein' : language === 'te' ? 'Type cheyandi' : 'Type instead'}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Animations */}
       <style>{`
-        @keyframes waveform {
-          0%, 100% { height: 6px; }
-          50%       { height: 20px; }
+        @keyframes orb-pulse {
+          0%, 100% { transform: scale(1); opacity: 0.6; }
+          50% { transform: scale(1.2); opacity: 0.15; }
+        }
+        @keyframes fade-in {
+          from { opacity: 0; transform: translateY(4px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes slide-up {
+          from { opacity: 0; transform: translateY(8px); }
+          to { opacity: 1; transform: translateY(0); }
         }
       `}</style>
     </div>
   );
 }
 
-// --------------- Chat Bubble ---------------
-
-function ChatBubble({ message, onSpeak, isSpeaking, t }) {
+function ChatBubble({ message }) {
   const isUser = message.role === 'user';
+  const sourceIcon = SOURCE_ICONS[message.source] || '';
 
   return (
-    <div className={`flex gap-2 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
-      <div
-        className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
-          isUser ? 'bg-primary-100' : 'bg-blue-100'
-        }`}
-      >
-        {isUser ? (
-          <User className="w-4 h-4 text-primary-800" />
-        ) : (
-          <Bot className="w-4 h-4 text-info" />
-        )}
+    <div className={`flex gap-2 ${isUser ? 'flex-row-reverse' : 'flex-row'} animate-[slide-up_0.3s_ease]`}>
+      <div className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 ${isUser ? 'bg-emerald-500/20' : 'bg-blue-500/20'}`}>
+        {isUser ? <User className="w-3.5 h-3.5 text-emerald-300" /> : <Bot className="w-3.5 h-3.5 text-blue-300" />}
       </div>
-      <div
-        className={`max-w-[80%] px-4 py-3 rounded-2xl text-sm leading-relaxed ${
-          isUser
-            ? 'bg-primary-800 text-white rounded-br-md'
-            : 'bg-white border border-gray-200 text-gray-800 rounded-bl-md'
-        }`}
-      >
+      <div className={`max-w-[80%] px-3 py-2.5 rounded-2xl text-sm leading-relaxed ${
+        isUser ? 'bg-emerald-600/50 text-white rounded-br-sm' : 'bg-white/10 border border-white/10 text-white/90 rounded-bl-sm'
+      }`}>
         <p className="whitespace-pre-line">{message.content}</p>
-        {!isUser && onSpeak && (
-          <button
-            onClick={() => onSpeak(message.content)}
-            className="mt-2 text-gray-400 hover:text-primary-800 transition-colors"
-            aria-label={t('chatbot.speakMessage')}
-          >
-            {isSpeaking ? (
-              <VolumeX className="w-4 h-4 text-primary-800 animate-pulse" />
-            ) : (
-              <Volume2 className="w-4 h-4" />
-            )}
-          </button>
-        )}
+        {!isUser && sourceIcon && <span className="inline-block mt-1 text-xs opacity-40">{sourceIcon}</span>}
       </div>
-    </div>
-  );
-}
-
-// =============== Main Component ===============
-
-export default function VoiceChatbot() {
-  const { t } = useTranslation();
-  const { user, language, selectedCrop } = useFarm();
-
-  // ---- Voice Agent Panel ----
-  const [voiceAgentOpen, setVoiceAgentOpen] = useState(false);
-
-  // ---- State ----
-  const [messages, setMessages] = useState([
-    { role: 'assistant', content: t('chatbot.speakNow') },
-  ]);
-  const [input, setInput] = useState('');
-  const [isListening, setIsListening] = useState(false);
-  const [processing, setProcessing] = useState(false);
-  const [isSpeaking, setIsSpeaking] = useState(false);
-  const [interimTranscript, setInterimTranscript] = useState('');
-
-  // ---- Refs ----
-  const messagesEndRef = useRef(null);
-  const handleSendRef = useRef(null);
-
-  // Deepgram STT refs
-  const wsRef = useRef(null);
-  const mediaStreamRef = useRef(null);
-  const mediaRecorderRef = useRef(null);
-
-  // TTS refs
-  const currentAudioRef = useRef(null);
-
-  // --------------- Scroll to bottom ---------------
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, interimTranscript]);
-
-  // --------------- Cleanup on unmount ---------------
-  useEffect(() => {
-    return () => {
-      stopDeepgramSTT();
-      stopTTS();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // =============== Deepgram STT ===============
-
-  const stopDeepgramSTT = useCallback(() => {
-    // Stop MediaRecorder
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      try {
-        mediaRecorderRef.current.stop();
-      } catch {
-        /* already stopped */
-      }
-    }
-    mediaRecorderRef.current = null;
-
-    // Close WebSocket
-    if (wsRef.current) {
-      if (wsRef.current.readyState === WebSocket.OPEN) {
-        // Send close message per Deepgram protocol
-        try {
-          wsRef.current.send(JSON.stringify({ type: 'CloseStream' }));
-        } catch {
-          /* ignore */
-        }
-      }
-      wsRef.current.close();
-      wsRef.current = null;
-    }
-
-    // Stop microphone tracks
-    if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach((track) => track.stop());
-      mediaStreamRef.current = null;
-    }
-
-    setInterimTranscript('');
-  }, []);
-
-  const startDeepgramSTT = useCallback(async () => {
-    try {
-      // 1. Get Deepgram API key from backend
-      const tokenData = await getSTTToken();
-      const apiKey = tokenData?.data?.key || tokenData?.key || tokenData?.token || tokenData?.apiKey;
-      if (!apiKey) throw new Error('No STT token received');
-
-      // 2. Get microphone stream
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaStreamRef.current = stream;
-
-      // 3. Open Deepgram WebSocket
-      const dgLang = DEEPGRAM_LANG[language] || 'en';
-      const wsUrl = `wss://api.deepgram.com/v1/listen?language=${dgLang}&model=nova-2&smart_format=true&interim_results=true&endpointing=300`;
-
-      const ws = new WebSocket(wsUrl, ['token', apiKey]);
-      wsRef.current = ws;
-
-      let finalTranscriptAccumulator = '';
-
-      ws.onopen = () => {
-        // 4. Start streaming audio via MediaRecorder
-        const mediaRecorder = new MediaRecorder(stream, {
-          mimeType: MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-            ? 'audio/webm;codecs=opus'
-            : 'audio/webm',
-        });
-        mediaRecorderRef.current = mediaRecorder;
-
-        mediaRecorder.ondataavailable = (event) => {
-          if (event.data.size > 0 && ws.readyState === WebSocket.OPEN) {
-            ws.send(event.data);
-          }
-        };
-
-        // Send audio in 250ms chunks
-        mediaRecorder.start(250);
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          const transcript = data?.channel?.alternatives?.[0]?.transcript;
-          if (!transcript) return;
-
-          if (data.is_final) {
-            finalTranscriptAccumulator += (finalTranscriptAccumulator ? ' ' : '') + transcript;
-            setInterimTranscript(finalTranscriptAccumulator);
-          } else {
-            // Show interim results for visual feedback
-            const preview = finalTranscriptAccumulator
-              ? finalTranscriptAccumulator + ' ' + transcript
-              : transcript;
-            setInterimTranscript(preview);
-          }
-        } catch {
-          /* ignore non-JSON frames */
-        }
-      };
-
-      ws.onclose = () => {
-        // When WebSocket closes, if we accumulated a transcript, send it
-        if (finalTranscriptAccumulator.trim()) {
-          const text = finalTranscriptAccumulator.trim();
-          setInput(text);
-          handleSendRef.current?.(text);
-        }
-        setIsListening(false);
-        setInterimTranscript('');
-      };
-
-      ws.onerror = () => {
-        console.error('Deepgram WebSocket error');
-        stopDeepgramSTT();
-        setIsListening(false);
-      };
-
-      setIsListening(true);
-    } catch (err) {
-      console.error('Failed to start Deepgram STT:', err);
-      stopDeepgramSTT();
-      setIsListening(false);
-    }
-  }, [language, stopDeepgramSTT]);
-
-  const toggleListening = useCallback(() => {
-    if (isListening) {
-      stopDeepgramSTT();
-      setIsListening(false);
-    } else {
-      startDeepgramSTT();
-    }
-  }, [isListening, startDeepgramSTT, stopDeepgramSTT]);
-
-  // =============== TTS (Deepgram with browser fallback) ===============
-
-  const stopTTS = useCallback(() => {
-    if (currentAudioRef.current) {
-      currentAudioRef.current.pause();
-      currentAudioRef.current.currentTime = 0;
-      // Revoke object URL to free memory
-      if (currentAudioRef.current.src?.startsWith('blob:')) {
-        URL.revokeObjectURL(currentAudioRef.current.src);
-      }
-      currentAudioRef.current = null;
-    }
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
-    setIsSpeaking(false);
-  }, []);
-
-  const speakWithBrowserFallback = useCallback(
-    (text) => {
-      if (!('speechSynthesis' in window)) return;
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = BROWSER_LANG[language] || 'en-IN';
-      utterance.rate = 0.9;
-
-      const voices = window.speechSynthesis.getVoices();
-      const langCode = BROWSER_LANG[language] || 'en-IN';
-      const matchingVoice =
-        voices.find((v) => v.lang === langCode) ||
-        voices.find((v) => v.lang.startsWith(langCode.split('-')[0]));
-      if (matchingVoice) utterance.voice = matchingVoice;
-
-      utterance.onend = () => setIsSpeaking(false);
-      utterance.onerror = () => setIsSpeaking(false);
-
-      setIsSpeaking(true);
-      window.speechSynthesis.speak(utterance);
-    },
-    [language],
-  );
-
-  const speakText = useCallback(
-    async (text) => {
-      // Stop any currently playing audio
-      stopTTS();
-
-      if (!text) return;
-
-      setIsSpeaking(true);
-
-      try {
-        const blob = await getTTSAudio(text, language);
-        if (!blob || blob.size === 0) throw new Error('Empty audio blob');
-
-        const audioUrl = URL.createObjectURL(blob);
-        const audio = new Audio(audioUrl);
-        currentAudioRef.current = audio;
-
-        audio.onended = () => {
-          URL.revokeObjectURL(audioUrl);
-          currentAudioRef.current = null;
-          setIsSpeaking(false);
-        };
-
-        audio.onerror = () => {
-          URL.revokeObjectURL(audioUrl);
-          currentAudioRef.current = null;
-          // Fallback to browser speech
-          speakWithBrowserFallback(text);
-        };
-
-        await audio.play();
-      } catch {
-        // Deepgram TTS failed -- fall back to browser SpeechSynthesis
-        speakWithBrowserFallback(text);
-      }
-    },
-    [language, stopTTS, speakWithBrowserFallback],
-  );
-
-  // =============== Send Message ===============
-
-  const handleSend = useCallback(
-    async (overrideText) => {
-      const text = overrideText || input.trim();
-      if (!text || processing) return;
-
-      const userMessage = { role: 'user', content: text };
-      setMessages((prev) => [...prev, userMessage]);
-      setInput('');
-      setProcessing(true);
-
-      try {
-        let responseText = '';
-
-        // Build conversation history (last N messages for context)
-        const history = [...messages, userMessage].slice(-HISTORY_WINDOW).map((m) => ({
-          role: m.role,
-          content: m.content,
-        }));
-
-        // Primary: Gemini chat API with conversation memory
-        try {
-          const chatResponse = await sendChatMessage({
-            message: text,
-            language,
-            context: {
-              crop: user?.primaryCrop || selectedCrop,
-              district: user?.district,
-              state: user?.state,
-            },
-            history,
-          });
-          responseText =
-            chatResponse?.data?.response ||
-            chatResponse?.response ||
-            chatResponse?.message ||
-            chatResponse?.reply ||
-            '';
-        } catch {
-          // Fallback: try specific service calls
-        }
-
-        // Fallback: service-specific calls based on detected intent
-        if (!responseText) {
-          const intent = detectIntent(text);
-          switch (intent) {
-            case 'weather': {
-              try {
-                const loc = user?.district || 'Hyderabad';
-                const weather = await getWeather(loc);
-                const curr = weather?.current || weather?.data?.current;
-                if (curr) {
-                  const temp = curr.temp ?? curr.temperature;
-                  responseText = `${t('weather.title')} - ${loc}:\n${t('weather.temperature')}: ${temp}\u00b0C\n${t('weather.humidity')}: ${curr.humidity}%\n${t('weather.wind')}: ${curr.windSpeed} km/h`;
-                }
-              } catch {
-                /* */
-              }
-              break;
-            }
-            case 'prices': {
-              try {
-                const crop = user?.primaryCrop || selectedCrop || 'cotton';
-                const data = await getPrices({ crop, state: user?.state });
-                const priceList = data?.prices || data?.data?.prices || [];
-                if (priceList.length > 0) {
-                  const top = priceList.slice(0, 3);
-                  responseText = `${t('prices.title')} - ${t(`crops.${crop}`, crop)}:\n${top
-                    .map(
-                      (p) =>
-                        `${p.mandi || p.market}: \u20B9${p.modal_price || p.price} ${t('prices.perQuintal')}`,
-                    )
-                    .join('\n')}`;
-                }
-              } catch {
-                /* */
-              }
-              break;
-            }
-            default:
-              break;
-          }
-        }
-
-        if (!responseText) {
-          responseText = t('chatbot.fallbackResponse');
-        }
-
-        const botMessage = { role: 'assistant', content: responseText };
-        setMessages((prev) => [...prev, botMessage]);
-
-        // Auto-speak the response via Deepgram TTS (with browser fallback)
-        speakText(responseText);
-      } catch {
-        setMessages((prev) => [
-          ...prev,
-          { role: 'assistant', content: t('common.error') },
-        ]);
-      } finally {
-        setProcessing(false);
-      }
-    },
-    [input, processing, messages, language, user, selectedCrop, t, speakText],
-  );
-
-  // Keep ref in sync so Deepgram WS callback uses the latest handleSend
-  handleSendRef.current = handleSend;
-
-  // =============== Chip & keyboard handlers ===============
-
-  const handleChipClick = (chipKey) => {
-    const chipQueryMap = {
-      weather: t('chatbot.suggestWeather'),
-      advisory: t('chatbot.suggestAdvisory'),
-      prices: t('chatbot.suggestPrices'),
-      schemes: t('chatbot.suggestSchemes'),
-    };
-    const query = chipQueryMap[chipKey];
-    if (query) handleSend(query);
-  };
-
-  const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
-  };
-
-  // Suggestion chips
-  const suggestionChips = [
-    { key: 'weather', labelKey: 'chatbot.suggestWeather' },
-    { key: 'advisory', labelKey: 'chatbot.suggestAdvisory' },
-    { key: 'prices', labelKey: 'chatbot.suggestPrices' },
-    { key: 'schemes', labelKey: 'chatbot.suggestSchemes' },
-  ];
-
-  // =============== Render ===============
-  return (
-    <div className="flex flex-col h-screen bg-background">
-      {/* Header */}
-      <div className="bg-primary-800 text-white px-4 py-4 flex items-center gap-3 flex-shrink-0">
-        <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
-          <Bot className="w-5 h-5" />
-        </div>
-        <div className="flex-1">
-          <h1 className="font-bold">{t('chatbot.title')}</h1>
-          <p className="text-xs text-primary-200">
-            {processing
-              ? t('chatbot.processing')
-              : isSpeaking
-                ? t('chatbot.speaking', 'Speaking...')
-                : t('app.name')}
-          </p>
-        </div>
-        {/* Voice Agent (premium) button */}
-        <button
-          onClick={() => setVoiceAgentOpen(true)}
-          className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center hover:bg-white/30 transition-colors"
-          aria-label="Open Voice Agent"
-          title="KrishiSathi Voice Agent"
-        >
-          <Headphones className="w-5 h-5" />
-        </button>
-        {/* Stop speaking button */}
-        {isSpeaking && (
-          <button
-            onClick={stopTTS}
-            className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center hover:bg-white/30 transition-colors"
-            aria-label="Stop speaking"
-          >
-            <VolumeX className="w-4 h-4" />
-          </button>
-        )}
-      </div>
-
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-        {messages.map((msg, i) => (
-          <ChatBubble
-            key={i}
-            message={msg}
-            onSpeak={speakText}
-            isSpeaking={isSpeaking}
-            t={t}
-          />
-        ))}
-
-        {/* Processing indicator */}
-        {processing && (
-          <div className="flex gap-2">
-            <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center">
-              <Bot className="w-4 h-4 text-info" />
-            </div>
-            <div className="bg-white border border-gray-200 rounded-2xl rounded-bl-md px-4 py-3">
-              <div className="flex items-center gap-2 text-sm text-gray-500">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                {t('chatbot.processing')}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Interim transcript preview while listening */}
-        {isListening && interimTranscript && (
-          <div className="flex gap-2 flex-row-reverse">
-            <div className="w-8 h-8 rounded-full bg-primary-100 flex items-center justify-center flex-shrink-0">
-              <User className="w-4 h-4 text-primary-800" />
-            </div>
-            <div className="max-w-[80%] px-4 py-3 rounded-2xl rounded-br-md bg-primary-800/70 text-white/80 text-sm leading-relaxed italic">
-              {interimTranscript}
-            </div>
-          </div>
-        )}
-
-        <div ref={messagesEndRef} />
-      </div>
-
-      {/* Suggestion Chips */}
-      {messages.length <= 2 && (
-        <div className="px-4 pb-2 flex gap-2 overflow-x-auto flex-shrink-0">
-          {suggestionChips.map((chip) => (
-            <button
-              key={chip.key}
-              onClick={() => handleChipClick(chip.key)}
-              className="px-4 py-2 rounded-full bg-white border border-gray-200 text-sm font-medium text-gray-700 whitespace-nowrap hover:bg-primary-50 hover:border-primary-300 transition-colors min-h-touch"
-            >
-              {t(chip.labelKey)}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* Input Bar */}
-      <div className="px-4 py-3 bg-white border-t border-gray-200 flex-shrink-0">
-        <div className="flex items-center gap-2">
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={t('chatbot.placeholder')}
-            className="input-field flex-1"
-            disabled={processing}
-          />
-
-          {/* Mic Button */}
-          <button
-            onClick={toggleListening}
-            disabled={processing}
-            className={`w-12 h-12 rounded-full flex items-center justify-center transition-all ${
-              isListening
-                ? 'bg-alert-red text-white animate-pulse'
-                : 'bg-primary-100 text-primary-800 hover:bg-primary-200'
-            }`}
-            aria-label={
-              isListening ? t('chatbot.stopListening') : t('chatbot.startListening')
-            }
-          >
-            {isListening ? (
-              <MicOff className="w-5 h-5" />
-            ) : (
-              <Mic className="w-5 h-5" />
-            )}
-          </button>
-
-          {/* Send Button */}
-          <button
-            onClick={() => handleSend()}
-            disabled={!input.trim() || processing}
-            className="w-12 h-12 rounded-full bg-primary-800 text-white flex items-center justify-center hover:bg-primary-900 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-            aria-label={t('chatbot.sendMessage')}
-          >
-            <Send className="w-5 h-5" />
-          </button>
-        </div>
-
-        {/* Listening indicator with waveform */}
-        {isListening && (
-          <div className="flex items-center justify-center gap-3 mt-2">
-            <WaveformIndicator />
-            <p className="text-sm text-alert-red font-medium animate-pulse">
-              {t('chatbot.listening')}
-            </p>
-            <WaveformIndicator />
-          </div>
-        )}
-
-        {/* Speaking indicator */}
-        {isSpeaking && !isListening && (
-          <p className="text-center text-sm text-primary-800 font-medium mt-2">
-            {t('chatbot.speaking', 'Speaking...')}
-          </p>
-        )}
-      </div>
-
-      {/* Voice Agent Panel (overlay) */}
-      <VoiceAgentPanel isOpen={voiceAgentOpen} onClose={() => setVoiceAgentOpen(false)} />
     </div>
   );
 }

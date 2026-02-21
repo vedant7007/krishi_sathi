@@ -14,10 +14,14 @@ export const broadcastAlert = (data) =>
   api.post('/emergency/alert', data).then((res) => res.data);
 
 /**
- * Get all emergency alerts.
+ * Get all emergency alerts (with language translation support).
  */
-export const getAlerts = () =>
-  api.get('/emergency/alerts').then((res) => res.data);
+export const getAlerts = () => {
+  const lang = localStorage.getItem('krishisathi-lang') || 'en';
+  const params = {};
+  if (lang !== 'en') params.lang = lang;
+  return api.get('/emergency/alerts', { params }).then((res) => res.data);
+};
 
 /**
  * Get aggregated alert statistics.

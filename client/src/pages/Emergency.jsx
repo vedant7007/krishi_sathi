@@ -87,34 +87,43 @@ function AlertCard({ alert, t }) {
         }`}>
           <Icon className={`w-5 h-5 ${style.iconColor}`} />
         </div>
-        <div className="flex-1 min-w-0 overflow-hidden">
+        <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap mb-1.5">
-            <span className={`${style.badge} text-xs`}>
+            <span className={`${style.badge} text-xs whitespace-nowrap`}>
               {translateSeverity(severity)}
             </span>
             {alert.type && (
-              <span className="text-xs text-gray-500 capitalize">
+              <span className="text-xs text-gray-500 capitalize whitespace-nowrap">
                 {t(`emergency.${alert.type}`, alert.type.replace(/_/g, ' '))}
               </span>
             )}
           </div>
 
-          <h3 className="font-bold text-gray-900 break-words">{alert.title}</h3>
+          <h3 className="font-bold text-gray-900 break-words leading-snug">
+            {alert.title}
+          </h3>
           <p className="text-sm text-gray-700 mt-1.5 leading-relaxed break-words">
             {alert.message}
           </p>
 
           {alert.affectedDistricts && alert.affectedDistricts.length > 0 && (
-            <div className="flex items-start gap-1.5 mt-2.5 pt-2.5 border-t border-black/5">
-              <MapPin className="w-3.5 h-3.5 text-gray-400 flex-shrink-0 mt-0.5" />
-              <p className="text-xs text-gray-500 break-words">
-                {alert.affectedDistricts.join(', ')}
-              </p>
+            <div className="mt-2.5 pt-2.5 border-t border-black/5">
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <MapPin className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+                <span className="text-xs font-medium text-gray-500">Affected Areas</span>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {alert.affectedDistricts.map((d) => (
+                  <span key={d} className="text-xs bg-white/70 text-gray-600 px-2 py-0.5 rounded-full border border-black/5">
+                    {d}
+                  </span>
+                ))}
+              </div>
             </div>
           )}
 
           {timestamp && (
-            <div className="flex items-center gap-1 mt-1.5 text-xs text-gray-400">
+            <div className="flex items-center gap-1 mt-2 text-xs text-gray-400">
               <Clock className="w-3 h-3 flex-shrink-0" />
               {timestamp}
             </div>
@@ -182,10 +191,10 @@ function BroadcastForm({ t, onSubmit, loading }) {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="card space-y-4">
+    <form onSubmit={handleSubmit} className="card shadow-md space-y-5">
       <h2 className="section-title flex items-center gap-2">
-        <Bell className="w-5 h-5 text-accent-700" />
-        {t('emergency.broadcast')}
+        <Bell className="w-5 h-5 text-accent-700 flex-shrink-0" />
+        <span className="break-words">{t('emergency.broadcast')}</span>
       </h2>
 
       {/* Type */}
@@ -212,13 +221,13 @@ function BroadcastForm({ t, onSubmit, loading }) {
         <label className="block text-sm font-semibold text-gray-700 mb-2">
           {t('emergency.severity')}
         </label>
-        <div className="flex flex-wrap gap-2">
+        <div className="grid grid-cols-3 gap-2">
           {SEVERITY_OPTIONS.map((opt) => (
             <label
               key={opt.value}
-              className={`flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer border-2 transition-all min-h-touch text-center ${
+              className={`flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg cursor-pointer border-2 transition-all text-center ${
                 form.severity === opt.value
-                  ? `${opt.color} ${opt.textColor} border-transparent`
+                  ? `${opt.color} ${opt.textColor} border-transparent shadow-sm`
                   : 'bg-white border-gray-200 text-gray-700'
               }`}
             >
@@ -316,13 +325,13 @@ function BroadcastForm({ t, onSubmit, loading }) {
         <label className="block text-sm font-semibold text-gray-700 mb-2">
           {t('emergency.channels')}
         </label>
-        <div className="flex flex-wrap gap-2">
+        <div className="grid grid-cols-3 gap-2">
           {CHANNEL_OPTIONS.map((ch) => (
             <label
               key={ch}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-lg cursor-pointer border-2 transition-all min-h-touch ${
+              className={`flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg cursor-pointer border-2 transition-all ${
                 form.channels.includes(ch)
-                  ? 'bg-primary-100 border-primary-500 text-primary-800'
+                  ? 'bg-primary-100 border-primary-500 text-primary-800 shadow-sm'
                   : 'bg-white border-gray-200 text-gray-600'
               }`}
             >
@@ -408,14 +417,17 @@ export default function Emergency() {
   return (
     <div className="min-h-screen bg-background pb-8">
       {/* Header */}
-      <div className="bg-gradient-to-br from-alert-red to-red-800 text-white px-4 pt-6 pb-8 rounded-b-3xl">
+      <div className="bg-gradient-to-br from-alert-red to-red-800 text-white px-4 pt-6 pb-10 rounded-b-3xl">
         <h1 className="text-2xl font-bold flex items-center gap-2">
-          <AlertTriangle className="w-6 h-6" />
+          <AlertTriangle className="w-6 h-6 flex-shrink-0" />
           {t('emergency.title')}
         </h1>
+        <p className="text-red-100 text-sm mt-1">
+          {t('emergency.subtitle', 'Stay informed about critical farming alerts')}
+        </p>
       </div>
 
-      <div className="px-4 -mt-4 space-y-4">
+      <div className="px-4 -mt-6 space-y-4 relative z-10">
         {/* Admin Broadcast Form */}
         {isAdmin && (
           <BroadcastForm
@@ -426,53 +438,55 @@ export default function Emergency() {
         )}
 
         {success && (
-          <div className="card border-green-200 bg-green-50 text-primary-800 text-sm font-medium">
+          <div className="card shadow-md border-green-200 bg-green-50 text-primary-800 text-sm font-medium">
             {success}
           </div>
         )}
 
         {error && (
-          <div className="card border-red-200 bg-red-50 text-alert-red text-sm font-medium">
+          <div className="card shadow-md border-red-200 bg-red-50 text-alert-red text-sm font-medium">
             {error}
           </div>
         )}
 
-        {/* Recent Alerts */}
-        <h2 className="section-title">{t('emergency.recentAlerts')}</h2>
+        {/* Recent Alerts — wrapped in card so it has a white background over the gradient */}
+        <div className="card shadow-md">
+          <h2 className="section-title mb-3">{t('emergency.recentAlerts')}</h2>
 
-        {loading && (
-          <div className="space-y-4">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="card space-y-3">
-                <div className="skeleton h-5 w-20" />
-                <div className="skeleton h-5 w-48" />
-                <div className="skeleton h-4 w-full" />
-                <div className="skeleton h-3 w-32" />
-              </div>
-            ))}
-          </div>
-        )}
+          {loading && (
+            <div className="space-y-3">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="space-y-3 p-3 bg-gray-50 rounded-lg">
+                  <div className="skeleton h-5 w-20" />
+                  <div className="skeleton h-5 w-48" />
+                  <div className="skeleton h-4 w-full" />
+                  <div className="skeleton h-3 w-32" />
+                </div>
+              ))}
+            </div>
+          )}
 
-        {!loading && alerts.length > 0 && (
-          <div className="space-y-3">
-            {alerts.map((alert, i) => (
-              <AlertCard
-                key={alert._id || alert.id || i}
-                alert={alert}
-                t={t}
-              />
-            ))}
-          </div>
-        )}
+          {!loading && alerts.length > 0 && (
+            <div className="space-y-3">
+              {alerts.map((alert, i) => (
+                <AlertCard
+                  key={alert._id || alert.id || i}
+                  alert={alert}
+                  t={t}
+                />
+              ))}
+            </div>
+          )}
 
-        {!loading && alerts.length === 0 && !error && (
-          <div className="card text-center py-12">
-            <AlertCircle className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-            <p className="text-gray-500 font-medium">
-              {t('emergency.noAlerts')}
-            </p>
-          </div>
-        )}
+          {!loading && alerts.length === 0 && !error && (
+            <div className="text-center py-12">
+              <AlertCircle className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+              <p className="text-gray-500 font-medium">
+                {t('emergency.noAlerts')}
+              </p>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

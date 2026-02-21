@@ -19,7 +19,19 @@ import {
   CloudRain,
   CloudSun,
   RefreshCw,
+  Sprout,
+  Calendar,
+  TrendingUp,
+  ShieldAlert,
 } from 'lucide-react';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+} from 'recharts';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -63,18 +75,22 @@ const SEVERITY_EMOJI = {
   humid: '\uD83D\uDCA7',
 };
 
-const ACTION_BORDER_COLORS = {
-  skip: 'border-l-info bg-blue-50',
-  spray: 'border-l-alert-red bg-red-50',
-  irrigate: 'border-l-primary-800 bg-primary-50',
-  ideal: 'border-l-primary-500 bg-green-50',
-  humid: 'border-l-accent-700 bg-accent-50',
-  irrigation: 'border-l-primary-800 bg-primary-50',
-  warning: 'border-l-accent-700 bg-amber-50',
-  caution: 'border-l-accent-700 bg-amber-50',
-  critical: 'border-l-alert-red bg-red-50',
-  info: 'border-l-info bg-blue-50',
-  success: 'border-l-primary-500 bg-green-50',
+const ACTION_STYLES = {
+  skip: { border: 'border-l-blue-400', bg: 'bg-blue-50', iconBg: 'bg-blue-100', iconColor: 'text-blue-600' },
+  spray: { border: 'border-l-red-400', bg: 'bg-red-50', iconBg: 'bg-red-100', iconColor: 'text-red-600' },
+  irrigate: { border: 'border-l-green-500', bg: 'bg-green-50', iconBg: 'bg-green-100', iconColor: 'text-green-700' },
+  ideal: { border: 'border-l-green-400', bg: 'bg-green-50', iconBg: 'bg-green-100', iconColor: 'text-green-600' },
+  humid: { border: 'border-l-amber-400', bg: 'bg-amber-50', iconBg: 'bg-amber-100', iconColor: 'text-amber-700' },
+  irrigation: { border: 'border-l-green-500', bg: 'bg-green-50', iconBg: 'bg-green-100', iconColor: 'text-green-700' },
+  warning: { border: 'border-l-amber-400', bg: 'bg-amber-50', iconBg: 'bg-amber-100', iconColor: 'text-amber-700' },
+  caution: { border: 'border-l-amber-400', bg: 'bg-amber-50', iconBg: 'bg-amber-100', iconColor: 'text-amber-700' },
+  critical: { border: 'border-l-red-400', bg: 'bg-red-50', iconBg: 'bg-red-100', iconColor: 'text-red-600' },
+  info: { border: 'border-l-blue-400', bg: 'bg-blue-50', iconBg: 'bg-blue-100', iconColor: 'text-blue-600' },
+  success: { border: 'border-l-green-400', bg: 'bg-green-50', iconBg: 'bg-green-100', iconColor: 'text-green-600' },
+};
+
+const DEFAULT_ACTION_STYLE = {
+  border: 'border-l-gray-400', bg: 'bg-gray-50', iconBg: 'bg-gray-100', iconColor: 'text-gray-600',
 };
 
 // ---------------------------------------------------------------------------
@@ -114,113 +130,37 @@ const generateMockWeather = () => ({
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Map a weather condition string to an emoji */
 function getWeatherEmoji(condition) {
   if (!condition) return '\u26C5';
   const lower = condition.toLowerCase();
-  // Direct lookup
   if (WEATHER_EMOJI[lower]) return WEATHER_EMOJI[lower];
-  // Partial match
   for (const [key, emoji] of Object.entries(WEATHER_EMOJI)) {
     if (lower.includes(key)) return emoji;
   }
   return '\u26C5';
 }
 
-/** Get the locale string for the current language */
 function getLocale() {
   const lang = getLang();
   const map = { en: 'en-IN', hi: 'hi-IN', te: 'te-IN' };
   return map[lang] || 'en-IN';
 }
 
-/** Format a date to show full date + day name in the user's locale */
-function localFullDate(dateStr) {
-  const d = new Date(dateStr);
-  const locale = getLocale();
-  return d.toLocaleDateString(locale, {
-    weekday: 'long',
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric',
-  });
-}
-
-/**
- * Extrapolate 3 additional forecast days from the last available day
- * by adding slight random variations.
- */
-function extrapolateForecast(forecast) {
-  if (!forecast || forecast.length === 0) return [];
-
-  const conditions = ['Clear', 'Partly Cloudy', 'Cloudy', 'Light Rain', 'Sunny'];
-  const last = forecast[forecast.length - 1];
-  const extraDays = [];
-
-  for (let i = 1; i <= 3; i++) {
-    const lastDate = new Date(last.date);
-    const newDate = new Date(lastDate.getTime() + i * 86400000);
-    const tempDelta = Math.round((Math.random() - 0.5) * 6);
-    const humDelta = Math.round((Math.random() - 0.5) * 15);
-
-    extraDays.push({
-      date: newDate.toISOString(),
-      tempMax: Math.round((last.tempMax || 34) + tempDelta),
-      tempMin: Math.round((last.tempMin || 22) + tempDelta * 0.6),
-      humidity: Math.max(20, Math.min(100, (last.humidity || 60) + humDelta)),
-      windSpeed: Math.max(0, Math.round((last.windSpeed || 10) + (Math.random() - 0.5) * 8)),
-      rainfall: Math.random() > 0.7 ? Math.round(Math.random() * 15) : 0,
-      rainProbability: Math.round(Math.random() * 70),
-      condition: conditions[Math.floor(Math.random() * conditions.length)],
-      _extrapolated: true,
-    });
-  }
-  return extraDays;
-}
-
-/**
- * Generate crop-specific alerts based on weather and primary crop.
- */
 function getCropAlerts(weatherData, crop, t) {
   const alerts = [];
   if (!weatherData?.current || !crop) return alerts;
-
   const { humidity, temp, rainfall, windSpeed } = weatherData.current;
 
-  if (crop === 'cotton' && humidity > 80) {
-    alerts.push({
-      type: 'warning',
-      message: t('weather.cottonBollworm'),
-    });
-  }
-
-  if (crop === 'rice' && temp > 38) {
-    alerts.push({
-      type: 'warning',
-      message: t('weather.riceHeatStress'),
-    });
-  }
-
-  if (rainfall > 50) {
-    alerts.push({
-      type: 'critical',
-      message: t('weather.heavyRainDrainage'),
-    });
-  }
-
-  if (windSpeed > 30) {
-    alerts.push({
-      type: 'warning',
-      message: t('weather.highWindSpray'),
-    });
-  }
-
-  if (humidity < 30) {
-    alerts.push({
-      type: 'info',
-      message: t('weather.lowHumidityHarvest'),
-    });
-  }
+  if (crop === 'cotton' && humidity > 80)
+    alerts.push({ type: 'warning', message: t('weather.cottonBollworm') });
+  if (crop === 'rice' && temp > 38)
+    alerts.push({ type: 'warning', message: t('weather.riceHeatStress') });
+  if (rainfall > 50)
+    alerts.push({ type: 'critical', message: t('weather.heavyRainDrainage') });
+  if (windSpeed > 30)
+    alerts.push({ type: 'warning', message: t('weather.highWindSpray') });
+  if (humidity < 30)
+    alerts.push({ type: 'info', message: t('weather.lowHumidityHarvest') });
 
   return alerts;
 }
@@ -229,111 +169,150 @@ function getCropAlerts(weatherData, crop, t) {
 // Sub-components
 // ---------------------------------------------------------------------------
 
-/** Loading skeleton shown while fetching */
 function LoadingSkeleton() {
   return (
     <div className="space-y-4 px-4 -mt-4">
-      {/* Current weather skeleton */}
-      <div className="card animate-pulse">
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 animate-pulse">
         <div className="flex items-center justify-between">
           <div className="space-y-3 flex-1">
-            <div className="h-10 w-28 bg-gray-200 rounded" />
-            <div className="h-5 w-40 bg-gray-200 rounded" />
-            <div className="h-4 w-32 bg-gray-200 rounded" />
+            <div className="h-12 w-32 bg-gray-200 rounded-lg" />
+            <div className="h-5 w-44 bg-gray-200 rounded" />
           </div>
           <div className="h-16 w-16 bg-gray-200 rounded-full" />
         </div>
-        <div className="grid grid-cols-3 gap-3 mt-4 pt-4 border-t border-gray-100">
+        <div className="grid grid-cols-3 gap-3 mt-5 pt-4 border-t border-gray-100">
           {[1, 2, 3].map((n) => (
             <div key={n} className="text-center space-y-2">
-              <div className="h-5 w-5 bg-gray-200 rounded-full mx-auto" />
-              <div className="h-3 w-14 bg-gray-200 rounded mx-auto" />
-              <div className="h-4 w-10 bg-gray-200 rounded mx-auto" />
+              <div className="h-8 w-8 bg-gray-200 rounded-lg mx-auto" />
+              <div className="h-4 w-12 bg-gray-200 rounded mx-auto" />
             </div>
           ))}
         </div>
       </div>
-      {/* Farming actions skeleton */}
-      <div className="card animate-pulse">
-        <div className="h-5 w-48 bg-gray-200 rounded mb-3" />
-        <div className="space-y-2">
-          {[1, 2, 3].map((n) => (
-            <div key={n} className="h-12 bg-gray-200 rounded" />
-          ))}
-        </div>
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 animate-pulse">
+        <div className="h-5 w-48 bg-gray-200 rounded mb-4" />
+        <div className="h-44 bg-gray-100 rounded-xl" />
       </div>
-      {/* Forecast skeleton */}
-      <div className="card animate-pulse">
-        <div className="h-5 w-40 bg-gray-200 rounded mb-3" />
-        <div className="flex gap-3">
-          {[1, 2, 3, 4].map((n) => (
-            <div key={n} className="h-36 w-28 bg-gray-200 rounded flex-shrink-0" />
-          ))}
+    </div>
+  );
+}
+
+function ChartTooltip({ active, payload, label }) {
+  if (!active || !payload || payload.length === 0) return null;
+  return (
+    <div className="bg-white rounded-xl shadow-lg border border-gray-100 px-4 py-3">
+      <p className="text-xs font-semibold text-gray-500 mb-1">{label}</p>
+      {payload.map((entry) => (
+        <p key={entry.dataKey} className="text-sm font-bold" style={{ color: entry.color }}>
+          {entry.dataKey === 'tempMax' ? 'High' : 'Low'}: {entry.value}{'\u00B0'}C
+        </p>
+      ))}
+    </div>
+  );
+}
+
+function TemperatureTrendChart({ forecast, t }) {
+  const chartData = useMemo(() => {
+    if (!forecast || forecast.length === 0) return [];
+    return forecast.slice(0, 7).map((day) => {
+      const d = new Date(day.date);
+      const dayLabel = d.toLocaleDateString(getLocale(), { weekday: 'short', day: 'numeric' });
+      return { name: dayLabel, tempMax: day.tempMax, tempMin: day.tempMin };
+    });
+  }, [forecast]);
+
+  if (chartData.length === 0) return null;
+
+  return (
+    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
+      <h2 className="text-base font-bold text-gray-800 mb-4 flex items-center gap-2">
+        <TrendingUp className="w-5 h-5 text-green-600" />
+        {t('weather.forecast')} - Temperature Trend
+      </h2>
+      <div className="w-full h-48">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={chartData} margin={{ top: 8, right: 12, left: -20, bottom: 0 }}>
+            <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#9CA3AF' }} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fontSize: 11, fill: '#9CA3AF' }} axisLine={false} tickLine={false} domain={['auto', 'auto']} unit={'\u00B0'} />
+            <Tooltip content={<ChartTooltip />} />
+            <Line type="monotone" dataKey="tempMax" stroke="#2E7D32" strokeWidth={2.5} dot={{ r: 4, fill: '#2E7D32', strokeWidth: 2, stroke: '#fff' }} activeDot={{ r: 6 }} name="Max" />
+            <Line type="monotone" dataKey="tempMin" stroke="#1565C0" strokeWidth={2.5} dot={{ r: 4, fill: '#1565C0', strokeWidth: 2, stroke: '#fff' }} activeDot={{ r: 6 }} name="Min" />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+      <div className="flex items-center justify-center gap-6 mt-3">
+        <div className="flex items-center gap-1.5">
+          <span className="w-3 h-3 rounded-full bg-green-700 inline-block" />
+          <span className="text-xs text-gray-500 font-medium">High</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="w-3 h-3 rounded-full bg-blue-700 inline-block" />
+          <span className="text-xs text-gray-500 font-medium">Low</span>
         </div>
       </div>
     </div>
   );
 }
 
-/** Single farming action card */
 function FarmingActionCard({ action }) {
   const actionText = translateFarmingAction(action.action) || action.action;
-  const emoji =
-    SEVERITY_EMOJI[action.type] || SEVERITY_EMOJI[action.severity] || '\u2139\uFE0F';
-  const borderClass =
-    ACTION_BORDER_COLORS[action.type] ||
-    ACTION_BORDER_COLORS[action.severity] ||
-    'border-l-gray-400 bg-gray-50';
+  const emoji = SEVERITY_EMOJI[action.type] || SEVERITY_EMOJI[action.severity] || '\u2139\uFE0F';
+  const styles = ACTION_STYLES[action.type] || ACTION_STYLES[action.severity] || DEFAULT_ACTION_STYLE;
 
   return (
-    <div
-      className={`border-l-4 rounded-r-xl p-3.5 min-h-touch flex items-start gap-3 ${borderClass}`}
-    >
-      <span className="text-lg flex-shrink-0 mt-0.5" aria-hidden="true">
-        {emoji}
-      </span>
+    <div className={`border-l-4 rounded-xl p-4 flex items-start gap-3 ${styles.border} ${styles.bg}`}>
+      <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${styles.iconBg}`}>
+        <span className="text-lg">{emoji}</span>
+      </div>
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-semibold text-gray-900 leading-snug">
-          {actionText}
-        </p>
+        <p className="text-sm font-semibold text-gray-900 leading-snug">{actionText}</p>
         {(action.detail || action.description) && (
-          <p className="text-xs text-gray-600 mt-0.5 leading-relaxed">
-            {action.detail || action.description}
-          </p>
+          <p className="text-xs text-gray-600 mt-1">{action.detail || action.description}</p>
+        )}
+        {action.severity && (
+          <span className={`inline-block mt-1.5 text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
+            action.severity === 'high' || action.severity === 'critical'
+              ? 'bg-red-100 text-red-700'
+              : action.severity === 'medium'
+              ? 'bg-amber-100 text-amber-700'
+              : 'bg-green-100 text-green-700'
+          }`}>
+            {action.severity}
+          </span>
         )}
       </div>
     </div>
   );
 }
 
-/** Single forecast day card */
 function ForecastDayCard({ day, index, t }) {
   const date = new Date(day.date || Date.now() + index * 86400000);
   const dayName = index === 0 ? t('weather.today') : getDayName(date.toISOString());
   const shortDate = formatDate(date.toISOString());
   const emoji = getWeatherEmoji(day.condition);
   const conditionText = translateWeatherCondition(day.condition);
+  const rainProb = day.rainProbability ?? 0;
 
   return (
-    <div
-      className={`card min-w-[115px] flex-shrink-0 text-center py-3 px-2.5 ${
-        day._extrapolated ? 'opacity-75 border-dashed' : ''
-      }`}
-    >
-      <p className="text-xs font-bold text-gray-700 uppercase truncate">
+    <div className={`min-w-[110px] flex-shrink-0 text-center py-3 px-3 rounded-xl border ${
+      day._estimated
+        ? 'bg-gray-50 border-dashed border-gray-200 opacity-75'
+        : index === 0 ? 'bg-green-50 border-green-200' : 'bg-white border-gray-100'
+    }`}>
+      <p className={`text-xs font-bold uppercase ${index === 0 ? 'text-green-700' : 'text-gray-600'}`}>
         {dayName}
       </p>
       <p className="text-[10px] text-gray-400 mt-0.5">{shortDate}</p>
-      <div className="text-3xl my-2" aria-label={conditionText}>
-        {emoji}
+      <div className="text-3xl my-2" aria-label={conditionText}>{emoji}</div>
+      <div className="flex items-center justify-center gap-1">
+        <span className="font-bold text-gray-900 text-sm">{day.tempMax ?? '--'}{'\u00B0'}</span>
+        <span className="text-gray-400">/</span>
+        <span className="text-gray-500 text-sm">{day.tempMin ?? '--'}{'\u00B0'}</span>
       </div>
-      <p className="font-bold text-gray-900 text-sm leading-none">
-        {day.tempMax ?? '--'}{t('units.celsius')}/{day.tempMin ?? '--'}{t('units.celsius')}
-      </p>
-      {(day.rainProbability !== undefined || day.rainfall !== undefined) && (
-        <div className="flex items-center justify-center gap-1 mt-1.5 text-xs text-info">
+      {rainProb > 0 && (
+        <div className="flex items-center justify-center gap-1 mt-1.5 text-xs text-blue-600">
           <Droplets className="w-3 h-3" />
-          <span>{day.rainProbability ?? 0}{t('units.percent')}</span>
+          <span className="font-medium">{rainProb}%</span>
         </div>
       )}
     </div>
@@ -357,10 +336,6 @@ export default function Weather() {
 
   const crop = user?.primaryCrop || '';
 
-  // -----------------------------------------------------------------------
-  // Data fetching
-  // -----------------------------------------------------------------------
-
   const fetchWeather = async (loc) => {
     if (!loc) return;
     setLocation(loc);
@@ -370,7 +345,6 @@ export default function Weather() {
     try {
       const response = await getWeather(loc);
       const data = response.data || response;
-
       if (!data || !data.current) {
         const mock = generateMockWeather();
         setWeatherData(mock);
@@ -378,7 +352,6 @@ export default function Weather() {
         setUsingMock(true);
         return;
       }
-
       setWeatherData(data);
       setGlobalWeather(data);
     } catch (err) {
@@ -392,15 +365,11 @@ export default function Weather() {
     }
   };
 
-  // Auto-detect location via GPS on mount, then fetch weather
   useEffect(() => {
-    // If user has a district, use that directly
     if (user?.district) {
       fetchWeather(user.district);
       return;
     }
-
-    // Otherwise try browser geolocation
     if (navigator.geolocation) {
       setDetectingGPS(true);
       navigator.geolocation.getCurrentPosition(
@@ -419,10 +388,7 @@ export default function Weather() {
             fetchWeather('Hyderabad');
           }
         },
-        () => {
-          setDetectingGPS(false);
-          fetchWeather('Hyderabad');
-        },
+        () => { setDetectingGPS(false); fetchWeather('Hyderabad'); },
         { timeout: 5000 }
       );
     } else {
@@ -436,97 +402,103 @@ export default function Weather() {
     fetchWeather(location);
   };
 
-  // -----------------------------------------------------------------------
   // Derived data
-  // -----------------------------------------------------------------------
-
   const current = weatherData?.current;
   const currentTemp = current?.temp ?? current?.temperature;
   const currentCondition = current?.condition;
 
-  // Build 10-day forecast: server's 7 + 3 extrapolated
-  const fullForecast = useMemo(() => {
+  const forecast = useMemo(() => {
     if (!weatherData?.forecast || weatherData.forecast.length === 0) return [];
     const serverDays = weatherData.forecast.slice(0, 7);
-    const extraDays = extrapolateForecast(serverDays);
+    // Extrapolate 3 more days from the last available day for 10-day view
+    const conditions = ['Clear', 'Partly Cloudy', 'Cloudy', 'Light Rain', 'Sunny'];
+    const last = serverDays[serverDays.length - 1];
+    const extraDays = [];
+    for (let i = 1; i <= 3; i++) {
+      const lastDate = new Date(last.date);
+      const newDate = new Date(lastDate.getTime() + i * 86400000);
+      const tempDelta = Math.round((Math.random() - 0.5) * 6);
+      extraDays.push({
+        date: newDate.toISOString(),
+        tempMax: Math.round((last.tempMax || 34) + tempDelta),
+        tempMin: Math.round((last.tempMin || 22) + tempDelta * 0.6),
+        humidity: Math.max(20, Math.min(100, (last.humidity || 60) + Math.round((Math.random() - 0.5) * 15))),
+        rainfall: Math.random() > 0.7 ? Math.round(Math.random() * 15) : 0,
+        rainProbability: Math.round(Math.random() * 70),
+        condition: conditions[Math.floor(Math.random() * conditions.length)],
+        _estimated: true,
+      });
+    }
     return [...serverDays, ...extraDays].slice(0, 10);
   }, [weatherData?.forecast]);
 
-  // Farming actions (prefer server-provided, fallback to mock defaults)
   const farmingActions = useMemo(() => {
     const sa = weatherData?.farmingActions;
     return sa && sa.length > 0 ? sa : [];
   }, [weatherData?.farmingActions]);
 
-  // Crop-specific alerts
   const cropAlerts = useMemo(
     () => getCropAlerts(weatherData, crop, t),
     [weatherData, crop, t]
   );
 
-  // Today's full date string in the user's locale
-  const todayDateStr = localFullDate(new Date().toISOString());
-
-  // -----------------------------------------------------------------------
-  // Render
-  // -----------------------------------------------------------------------
+  // Today's date in user's locale
+  const todayDateStr = new Date().toLocaleDateString(getLocale(), {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+  });
 
   return (
     <div className="min-h-screen bg-background pb-8">
-      {/* ============ Header ============ */}
-      <div className="bg-gradient-to-br from-info to-blue-800 text-white px-4 pt-6 pb-8 rounded-b-3xl">
+      {/* Header */}
+      <div className="bg-gradient-to-br from-blue-600 to-blue-800 text-white px-4 pt-6 pb-10 rounded-b-3xl">
         <h1 className="text-2xl font-bold flex items-center gap-2 mb-1">
           <CloudSun className="w-6 h-6" />
           {t('weather.title')}
         </h1>
         <p className="text-blue-200 text-sm mb-4">{todayDateStr}</p>
 
-        {/* Location search form */}
+        {/* Search */}
         <form onSubmit={handleSearch} className="flex gap-2">
           <div className="relative flex-1">
-            <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-blue-200" />
+            <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-blue-300" />
             <input
               type="text"
               value={location}
               onChange={(e) => setLocation(e.target.value)}
               placeholder={t('weather.enterLocation')}
-              className="w-full pl-11 pr-4 py-3 rounded-xl bg-white/10 border border-white/20 text-white placeholder:text-blue-200 outline-none focus:ring-2 focus:ring-white/40 min-h-touch text-base"
+              className="w-full pl-11 pr-4 py-3 rounded-xl bg-white/15 border border-white/20 text-white placeholder:text-blue-300 outline-none focus:ring-2 focus:ring-white/40 text-base"
             />
           </div>
           <button
             type="submit"
             disabled={loading}
-            className="bg-white text-info px-4 rounded-xl font-semibold min-h-touch min-w-touch flex items-center justify-center active:scale-95 transition-transform"
+            className="bg-white text-blue-700 px-4 rounded-xl font-semibold flex items-center justify-center shadow-sm"
             aria-label={t('common.search')}
           >
-            {loading ? (
-              <Loader2 className="w-5 h-5 animate-spin" />
-            ) : (
-              <Search className="w-5 h-5" />
-            )}
+            {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Search className="w-5 h-5" />}
           </button>
         </form>
       </div>
 
-      {/* ============ Content ============ */}
-      <div className="px-4 -mt-4 space-y-4">
-        {/* Mock data notice */}
+      {/* Content */}
+      <div className="px-4 -mt-6 space-y-4">
+        {/* Mock notice */}
         {usingMock && (
-          <div className="card border-amber-200 bg-amber-50 text-amber-800 text-sm font-medium flex items-start gap-2">
+          <div className="bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-sm font-medium flex items-start gap-2 p-3">
             <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" />
             <p>{t('weather.mockNotice')}</p>
           </div>
         )}
 
-        {/* Error state with retry */}
+        {/* Error */}
         {error && !usingMock && (
-          <div className="card border-red-200 bg-red-50 text-alert-red text-center py-8">
-            <AlertTriangle className="w-10 h-10 mx-auto mb-3 text-alert-red" />
-            <p className="font-semibold mb-1">{t('common.error')}</p>
-            <p className="text-sm text-gray-600 mb-4">{t('weather.errorFetch')}</p>
+          <div className="bg-white rounded-2xl shadow-sm border border-red-100 text-center py-10 px-4">
+            <AlertTriangle className="w-12 h-12 text-red-400 mx-auto mb-3" />
+            <p className="font-semibold text-gray-900 mb-1">{t('common.error')}</p>
+            <p className="text-sm text-gray-500 mb-4">{t('weather.errorFetch')}</p>
             <button
               onClick={() => fetchWeather(location)}
-              className="inline-flex items-center gap-2 px-5 py-2.5 bg-primary-800 text-white rounded-xl font-semibold min-h-touch active:scale-95 transition-transform"
+              className="inline-flex items-center gap-2 px-5 py-2.5 bg-green-700 text-white rounded-xl font-semibold text-sm"
             >
               <RefreshCw className="w-4 h-4" />
               {t('common.retry')}
@@ -534,97 +506,85 @@ export default function Weather() {
           </div>
         )}
 
-        {/* GPS detecting indicator */}
+        {/* GPS detecting */}
         {detectingGPS && (
-          <div className="card flex items-center gap-3 text-sm text-gray-600">
-            <Loader2 className="w-4 h-4 animate-spin text-info" />
-            <MapPin className="w-4 h-4 text-info" />
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 flex items-center gap-3 text-sm text-gray-600">
+            <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
+            <MapPin className="w-4 h-4 text-blue-500" />
             {t('profile.detectingLocation')}
           </div>
         )}
 
-        {/* Loading skeleton */}
+        {/* Loading */}
         {loading && !weatherData && <LoadingSkeleton />}
 
-        {/* ============ Weather data ============ */}
+        {/* Weather Data */}
         {current && (
           <>
-            {/* ---------- Today's Weather ---------- */}
-            <div className="card bg-gradient-to-br from-blue-50 to-white">
-              {/* Section header */}
-              <h2 className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-3 flex items-center gap-1.5">
-                <span>{'\uD83C\uDF24\uFE0F'}</span>
-                {t('weather.todaysWeather')}
-              </h2>
+            {/* Today's Weather */}
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
+              {/* Location */}
+              {location && (
+                <p className="text-sm text-gray-500 flex items-center gap-1.5 mb-3">
+                  <MapPin className="w-3.5 h-3.5" />
+                  {weatherData?.location || location}
+                </p>
+              )}
 
               <div className="flex items-center justify-between">
                 <div>
-                  {/* Location pin */}
-                  {location && (
-                    <p className="text-sm text-gray-500 flex items-center gap-1 mb-1">
-                      <MapPin className="w-3.5 h-3.5" />
-                      {weatherData?.location || location}
-                    </p>
-                  )}
-                  {/* Temperature */}
-                  <p className="text-5xl font-bold text-gray-900 leading-none">
+                  <p className="text-5xl font-extrabold text-gray-900 leading-none">
                     {currentTemp !== undefined ? currentTemp : '--'}
-                    <span className="text-3xl">{t('units.celsius')}</span>
+                    <span className="text-3xl text-gray-500">{t('units.celsius')}</span>
                   </p>
-                  {/* Condition text (translated) */}
-                  <p className="text-base text-gray-700 capitalize mt-1.5">
-                    {getWeatherEmoji(currentCondition)}{' '}
-                    {translateWeatherCondition(currentCondition) ||
-                      current?.description ||
-                      ''}
+                  <p className="text-sm text-gray-600 capitalize mt-2 font-medium">
+                    {translateWeatherCondition(currentCondition) || current?.description || ''}
                   </p>
                 </div>
-                {/* Large weather emoji */}
-                <span className="text-6xl" aria-hidden="true">
+                <span className="text-6xl flex-shrink-0" aria-hidden="true">
                   {getWeatherEmoji(currentCondition)}
                 </span>
               </div>
 
-              {/* Humidity / Wind / Rainfall row */}
-              <div className="grid grid-cols-3 gap-3 mt-4 pt-4 border-t border-gray-100">
+              {/* Key metrics */}
+              <div className="grid grid-cols-3 gap-3 mt-5 pt-4 border-t border-gray-100">
                 <div className="text-center">
-                  <Droplets className="w-5 h-5 text-info mx-auto mb-1" />
+                  <Droplets className="w-5 h-5 text-blue-500 mx-auto mb-1" />
                   <p className="text-xs text-gray-500">{t('weather.humidity')}</p>
-                  <p className="font-bold text-gray-900 text-sm">
-                    {current.humidity !== undefined
-                      ? `${current.humidity}${t('units.percent')}`
-                      : '--'}
+                  <p className="font-bold text-gray-900">
+                    {current.humidity !== undefined ? `${current.humidity}%` : '--'}
                   </p>
                 </div>
                 <div className="text-center">
                   <Wind className="w-5 h-5 text-gray-500 mx-auto mb-1" />
                   <p className="text-xs text-gray-500">{t('weather.wind')}</p>
-                  <p className="font-bold text-gray-900 text-sm">
-                    {current.windSpeed !== undefined
-                      ? `${current.windSpeed} ${t('units.kmph')}`
-                      : '--'}
+                  <p className="font-bold text-gray-900">
+                    {current.windSpeed !== undefined ? `${current.windSpeed} ${t('units.kmph')}` : '--'}
                   </p>
                 </div>
                 <div className="text-center">
                   <CloudRain className="w-5 h-5 text-blue-500 mx-auto mb-1" />
                   <p className="text-xs text-gray-500">{t('weather.rainfall')}</p>
-                  <p className="font-bold text-gray-900 text-sm">
-                    {current.rainfall !== undefined
-                      ? `${current.rainfall} ${t('units.mm')}`
-                      : `0 ${t('units.mm')}`}
+                  <p className="font-bold text-gray-900">
+                    {current.rainfall !== undefined ? `${current.rainfall} ${t('units.mm')}` : `0 ${t('units.mm')}`}
                   </p>
                 </div>
               </div>
             </div>
 
-            {/* ---------- Farming Actions ---------- */}
+            {/* Temperature Trend Chart */}
+            {forecast.length > 0 && (
+              <TemperatureTrendChart forecast={forecast} t={t} />
+            )}
+
+            {/* Farming Actions */}
             {farmingActions.length > 0 && (
               <div>
-                <h2 className="section-title mb-3 flex items-center gap-1.5">
-                  <span>{'\uD83C\uDF3E'}</span>
+                <h2 className="text-base font-bold text-gray-800 mb-3 flex items-center gap-2">
+                  <Sprout className="w-5 h-5 text-green-600" />
                   {t('weather.farmingAction')}
                 </h2>
-                <div className="space-y-2">
+                <div className="space-y-2.5">
                   {farmingActions.map((action, i) => (
                     <FarmingActionCard key={i} action={action} />
                   ))}
@@ -632,58 +592,51 @@ export default function Weather() {
               </div>
             )}
 
-            {/* ---------- 10-Day Forecast ---------- */}
-            {fullForecast.length > 0 && (
+            {/* 10-Day Forecast */}
+            {forecast.length > 0 && (
               <div>
-                <h2 className="section-title mb-3 flex items-center gap-1.5">
-                  <span>{'\uD83D\uDCC5'}</span>
-                  {t('weather.forecast')}
+                <h2 className="text-base font-bold text-gray-800 mb-3 flex items-center gap-2">
+                  <Calendar className="w-5 h-5 text-blue-600" />
+                  10-Day {t('weather.forecast')}
                 </h2>
-                <div className="flex overflow-x-auto gap-3 pb-2 -mx-1 px-1 scrollbar-hide">
-                  {fullForecast.map((day, i) => (
+                <div className="flex overflow-x-auto gap-2.5 pb-2 -mx-1 px-1 scrollbar-hide">
+                  {forecast.map((day, i) => (
                     <ForecastDayCard key={i} day={day} index={i} t={t} />
                   ))}
                 </div>
-                {/* Note about extrapolated days */}
-                {fullForecast.some((d) => d._extrapolated) && (
-                  <p className="text-[11px] text-gray-400 mt-1.5 italic">
-                    {t('weather.extrapolatedNotice')}
+                {forecast.some((d) => d._estimated) && (
+                  <p className="text-[11px] text-gray-400 mt-2 italic">
+                    * Dashed cards are estimated forecasts
                   </p>
                 )}
               </div>
             )}
 
-            {/* ---------- Crop-Specific Alerts ---------- */}
+            {/* Crop Alerts */}
             {cropAlerts.length > 0 && (
               <div>
-                <h2 className="section-title mb-3 flex items-center gap-1.5">
-                  <span>{'\uD83C\uDF3E'}</span>
+                <h2 className="text-base font-bold text-gray-800 mb-3 flex items-center gap-2">
+                  <ShieldAlert className="w-5 h-5 text-red-500" />
                   {t('weather.cropAlerts')}
                 </h2>
-                <div className="space-y-2">
+                <div className="space-y-2.5">
                   {cropAlerts.map((alert, i) => (
                     <div
                       key={i}
-                      className={`card flex items-start gap-3 border-l-4 ${
+                      className={`rounded-xl border-l-4 p-4 flex items-start gap-3 ${
                         alert.type === 'critical'
-                          ? 'border-l-alert-red bg-red-50'
+                          ? 'border-l-red-400 bg-red-50'
                           : alert.type === 'warning'
-                          ? 'border-l-accent-700 bg-amber-50'
-                          : 'border-l-info bg-blue-50'
+                          ? 'border-l-amber-400 bg-amber-50'
+                          : 'border-l-blue-400 bg-blue-50'
                       }`}
                     >
-                      <AlertTriangle
-                        className={`w-5 h-5 flex-shrink-0 mt-0.5 ${
-                          alert.type === 'critical'
-                            ? 'text-alert-red'
-                            : alert.type === 'warning'
-                            ? 'text-accent-700'
-                            : 'text-info'
-                        }`}
-                      />
-                      <p className="text-sm font-medium text-gray-800">
-                        {alert.message}
-                      </p>
+                      <AlertTriangle className={`w-5 h-5 flex-shrink-0 mt-0.5 ${
+                        alert.type === 'critical' ? 'text-red-500'
+                          : alert.type === 'warning' ? 'text-amber-500'
+                          : 'text-blue-500'
+                      }`} />
+                      <p className="text-sm font-medium text-gray-800">{alert.message}</p>
                     </div>
                   ))}
                 </div>
@@ -692,13 +645,11 @@ export default function Weather() {
           </>
         )}
 
-        {/* ============ Empty state ============ */}
+        {/* Empty state */}
         {!loading && !weatherData && !error && (
-          <div className="card text-center py-12">
-            <CloudSun className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-            <p className="text-gray-500 font-medium">
-              {t('weather.emptyState')}
-            </p>
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 text-center py-12 px-4">
+            <CloudSun className="w-16 h-16 text-blue-300 mx-auto mb-4" />
+            <p className="text-gray-500 font-medium">{t('weather.emptyState')}</p>
           </div>
         )}
       </div>
