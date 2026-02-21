@@ -241,6 +241,19 @@ export default function Register() {
           if (data.display_name) {
             address = data.display_name;
           }
+
+          // Auto-fill district and state from reverse geocoding
+          if (data.address) {
+            const district = data.address.state_district || data.address.county || data.address.city || '';
+            const state = data.address.state || '';
+            if (district || state) {
+              setForm((prev) => ({
+                ...prev,
+                district: prev.district || district,
+                state: prev.state || (STATE_OPTIONS.find((s) => s.toLowerCase() === state.toLowerCase()) || prev.state),
+              }));
+            }
+          }
         } catch {
           address = `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
         }

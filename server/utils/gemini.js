@@ -77,28 +77,51 @@ async function googleTranslateText(text, targetLang) {
  * Used as fallback when Gemini is rate-limited.
  */
 async function googleTranslateBatch(items, fields, targetLang) {
-  const translated = [];
-  for (const item of items) {
-    const copy = { ...item };
-    for (const f of fields) {
-      if (copy[f] && typeof copy[f] === 'string' && copy[f].trim()) {
-        copy[f] = await googleTranslateText(copy[f], targetLang);
-      }
-    }
-    translated.push(copy);
-  }
-  return translated;
+  // Translate all items and their fields in parallel for speed
+  return Promise.all(
+    items.map(async (item) => {
+      const copy = { ...item };
+      await Promise.all(
+        fields.map(async (f) => {
+          if (copy[f] && typeof copy[f] === 'string' && copy[f].trim()) {
+            copy[f] = await googleTranslateText(copy[f], targetLang);
+          }
+        })
+      );
+      return copy;
+    })
+  );
 }
 
 /**
  * Translate a single object's string values using free Google Translate.
+ * Recursively handles nested objects and arrays.
  */
 async function googleTranslateObj(obj, targetLang) {
   if (!obj || typeof obj !== 'object') return obj;
-  const copy = Array.isArray(obj) ? [...obj] : { ...obj };
+
+  if (Array.isArray(obj)) {
+    const result = [];
+    for (const item of obj) {
+      if (typeof item === 'string' && item.trim()) {
+        result.push(await googleTranslateText(item, targetLang));
+      } else if (typeof item === 'object' && item !== null) {
+        result.push(await googleTranslateObj(item, targetLang));
+      } else {
+        result.push(item);
+      }
+    }
+    return result;
+  }
+
+  const copy = { ...obj };
   for (const key of Object.keys(copy)) {
     if (typeof copy[key] === 'string' && copy[key].trim()) {
       copy[key] = await googleTranslateText(copy[key], targetLang);
+    } else if (Array.isArray(copy[key])) {
+      copy[key] = await googleTranslateObj(copy[key], targetLang);
+    } else if (typeof copy[key] === 'object' && copy[key] !== null) {
+      copy[key] = await googleTranslateObj(copy[key], targetLang);
     }
   }
   return copy;
@@ -171,18 +194,34 @@ Return ONLY the valid JSON, no markdown fences, no explanation.
 
 ${JSON.stringify(obj)}`;
 
+  // Helper: check if translation actually changed the content (avoid caching English as "translated")
+  function didTranslate(original, translated) {
+    const origStr = JSON.stringify(original);
+    const transStr = JSON.stringify(translated);
+    return origStr !== transStr;
+  }
+
   try {
     const result = await exports.generate(prompt);
     const cleaned = result.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
     const parsed = JSON.parse(cleaned);
     console.log(`[translateJSON] Gemini translated to ${langName}`);
-    setCache(cacheKey, parsed);
+    if (didTranslate(obj, parsed)) {
+      setCache(cacheKey, parsed);
+    } else {
+      console.warn(`[translateJSON] Gemini returned same content — not caching`);
+    }
     return parsed;
   } catch (geminiErr) {
-    console.log(`[translateJSON] Gemini failed, using Google Translate fallback for ${langName}`);
+    console.log(`[translateJSON] Gemini failed (${geminiErr.message?.substring(0, 60)}), trying Google Translate for ${langName}`);
     try {
       const result = await googleTranslateObj(obj, targetLang);
-      setCache(cacheKey, result);
+      if (didTranslate(obj, result)) {
+        setCache(cacheKey, result);
+        console.log(`[translateJSON] Google Translate succeeded for ${langName}`);
+      } else {
+        console.warn(`[translateJSON] Google Translate returned same content — not caching`);
+      }
       return result;
     } catch (err) {
       console.error(`[translateJSON] All translation failed for ${langName}:`, err.message);
@@ -394,12 +433,16 @@ RESPONSE RULES (CRITICAL \u2014 this is VOICE, farmer is listening with ears, no
 /**
  * Generate crop advisory using Gemini when DB has no data.
  */
-exports.generateAdvisory = async (crop, soilType, season) => {
+exports.generateAdvisory = async (crop, soilType, season, targetLang) => {
+  const langName = targetLang === 'hi' ? 'Hindi' : targetLang === 'te' ? 'Telugu' : 'English';
+  const langInstruction = targetLang && targetLang !== 'en'
+    ? `\nIMPORTANT: ALL string values MUST be written in ${langName} language. Translate every text value to ${langName}. Keep JSON keys in English only.`
+    : '';
   const prompt = `You are an expert Indian agricultural scientist. Generate detailed farming advisory for:
 - Crop: ${crop}
 - Soil type: ${soilType || 'general'}
 - Season: ${season || 'general'}
-
+${langInstruction}
 Return ONLY valid JSON (no markdown fences) with this exact structure:
 {
   "fertilizer": {

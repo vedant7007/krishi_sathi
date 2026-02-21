@@ -4,7 +4,7 @@ import { useFarm } from '../context/FarmContext';
 import useVoiceAgent from '../hooks/useVoiceAgent';
 import MicButton from '../components/VoiceAgent/MicButton';
 import QuickChips from '../components/VoiceAgent/QuickChips';
-import { User, Bot, AlertCircle, Send, Keyboard, X, ChevronDown } from 'lucide-react';
+import { User, Bot, AlertCircle, Send, Keyboard, X, ChevronDown, PhoneOff } from 'lucide-react';
 
 const SOURCE_ICONS = {
   advisory: '\uD83C\uDF3E',
@@ -15,9 +15,9 @@ const SOURCE_ICONS = {
 };
 
 const greetings = {
-  en: 'Hi! I\'m KrishiSathi AI.\nTap the mic and ask me anything about farming.',
-  hi: 'Namaste! Main KrishiSathi AI hoon.\nMic dabayein aur kheti ke baare mein poochiye.',
-  te: 'Namaskaram! Nenu KrishiSathi AI.\nMic noppi vyavasayam gurinchi adagandi.',
+  en: 'Hi! I\'m KrishiSathi AI.\nTap the mic to start a conversation.',
+  hi: 'Namaste! Main KrishiSathi AI hoon.\nMic dabayein aur baat shuru karein.',
+  te: 'Namaskaram! Nenu KrishiSathi AI.\nMic noppi sambhashanalu prarambhinchandi.',
 };
 
 const placeholders = {
@@ -26,11 +26,17 @@ const placeholders = {
   te: 'Prashna raayandi...',
 };
 
-const statusLabels = {
-  idle: { en: 'Tap to speak', hi: 'Bolne ke liye dabaiye', te: 'Matlaadataniki noppandi' },
-  listening: { en: 'Listening... tap to stop', hi: 'Sun raha hoon... rokne ke liye dabaiye', te: 'Vintunnanu... aapataniki noppandi' },
-  processing: { en: 'Thinking...', hi: 'Soch raha hoon...', te: 'Aalochistunnanu...' },
-  speaking: { en: 'Speaking... tap to stop', hi: 'Bol raha hoon... rokne ke liye dabaiye', te: 'Cheptunnanu... aapataniki noppandi' },
+const getStatusLabel = (status, isActive, language) => {
+  const labels = {
+    idle: isActive
+      ? { en: 'Conversation active', hi: 'Baat chal rahi hai', te: 'Sambhashanalu jarugutondi' }
+      : { en: 'Tap to start', hi: 'Shuru karne ke liye dabaiye', te: 'Prarambhinchataniki noppandi' },
+    listening: { en: 'Listening...', hi: 'Sun raha hoon...', te: 'Vintunnanu...' },
+    processing: { en: 'Thinking...', hi: 'Soch raha hoon...', te: 'Aalochistunnanu...' },
+    speaking: { en: 'Speaking... tap to skip', hi: 'Bol raha hoon... skip ke liye dabaiye', te: 'Cheptunnanu... skip cheyyataniki noppandi' },
+  };
+  const entry = labels[status] || labels.idle;
+  return entry[language] || entry.en || '';
 };
 
 export default function VoiceChatbot() {
@@ -46,8 +52,9 @@ export default function VoiceChatbot() {
     interimTranscript,
     messages,
     error,
-    startListening,
-    stopListening,
+    isActive,
+    toggleConversation,
+    endConversation,
     sendQuickQuery,
     sendTextQuery,
     stopSpeaking,
@@ -58,9 +65,13 @@ export default function VoiceChatbot() {
   }, [messages, interimTranscript]);
 
   const handleMicTap = () => {
-    if (status === 'listening') stopListening();
-    else if (status === 'speaking') stopSpeaking();
-    else if (status === 'idle') startListening();
+    if (status === 'speaking') {
+      // Skip current TTS — auto-resumes listening
+      stopSpeaking();
+    } else {
+      // Toggle the entire conversation on/off
+      toggleConversation();
+    }
   };
 
   const handleTextSend = () => {
@@ -78,7 +89,7 @@ export default function VoiceChatbot() {
   };
 
   const isBusy = status === 'processing' || status === 'speaking';
-  const label = statusLabels[status]?.[language] || statusLabels[status]?.en || '';
+  const label = getStatusLabel(status, isActive, language);
   const hasMessages = messages.length > 0;
 
   return (
@@ -95,7 +106,7 @@ export default function VoiceChatbot() {
 
         {/* Mic button with animated orbs */}
         <div className="relative mb-3">
-          {status === 'listening' && (
+          {isActive && status === 'listening' && (
             <>
               <span className="absolute inset-[-20px] rounded-full bg-white/10 animate-[orb-pulse_2s_ease-in-out_infinite]" />
               <span className="absolute inset-[-40px] rounded-full bg-white/5 animate-[orb-pulse_2s_ease-in-out_0.6s_infinite]" />
@@ -107,18 +118,30 @@ export default function VoiceChatbot() {
           {status === 'processing' && (
             <span className="absolute inset-[-14px] rounded-full bg-amber-400/15 animate-[orb-pulse_1s_ease-in-out_infinite]" />
           )}
-          <MicButton status={status} language={language} onTap={handleMicTap} />
+          <MicButton status={status} language={language} onTap={handleMicTap} isActive={isActive} />
         </div>
 
         {/* Status label */}
-        <p className={`text-sm font-medium mb-3 transition-colors ${
+        <p className={`text-sm font-medium mb-2 transition-colors ${
           status === 'listening' ? 'text-red-300 animate-pulse' :
           status === 'processing' ? 'text-yellow-300' :
           status === 'speaking' ? 'text-blue-300' :
+          isActive ? 'text-emerald-300' :
           'text-white/50'
         }`}>
           {label}
         </p>
+
+        {/* End conversation button — visible when active */}
+        {isActive && (
+          <button
+            onClick={endConversation}
+            className="flex items-center gap-1.5 px-4 py-1.5 mb-2 rounded-full bg-red-500/20 border border-red-400/30 text-red-300 text-xs font-medium hover:bg-red-500/30 transition-all active:scale-95 animate-[fade-in_0.2s_ease]"
+          >
+            <PhoneOff className="w-3 h-3" />
+            {language === 'hi' ? 'Baat khatam karein' : language === 'te' ? 'Aapandi' : 'End conversation'}
+          </button>
+        )}
 
         {/* Live transcription bubble */}
         {(status === 'listening' || status === 'processing') && (interimTranscript || transcript) && (

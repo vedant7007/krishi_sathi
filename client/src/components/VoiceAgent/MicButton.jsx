@@ -1,6 +1,6 @@
-import { Mic, Loader2, Square } from 'lucide-react';
+import { Mic, MicOff, Loader2 } from 'lucide-react';
 
-export default function MicButton({ status = 'idle', language = 'en', onTap, compact = false }) {
+export default function MicButton({ status = 'idle', language = 'en', onTap, compact = false, isActive = false }) {
   if (compact) {
     return (
       <button
@@ -10,18 +10,21 @@ export default function MicButton({ status = 'idle', language = 'en', onTap, com
           status === 'listening' ? 'bg-red-500 text-white' :
           status === 'processing' ? 'bg-yellow-500 text-white' :
           status === 'speaking' ? 'bg-blue-500 text-white' :
+          isActive ? 'bg-emerald-600 text-white' :
           'bg-emerald-500 hover:bg-emerald-400 text-white'
         }`}
       >
         {status === 'processing' ? <Loader2 className="w-5 h-5 animate-spin" /> :
          status === 'speaking' ? <SoundWave small /> :
+         status === 'listening' ? <SoundWave small /> :
+         isActive ? <MicOff className="w-5 h-5" /> :
          <Mic className="w-5 h-5" />}
       </button>
     );
   }
 
   // Full-size voice-first mic button — hero element
-  const size = status === 'listening' ? 'w-24 h-24' : 'w-20 h-20';
+  const size = (status === 'listening' || (isActive && status !== 'idle')) ? 'w-24 h-24' : 'w-20 h-20';
 
   return (
     <button
@@ -34,7 +37,9 @@ export default function MicButton({ status = 'idle', language = 'en', onTap, com
             ? 'bg-amber-500 shadow-amber-500/30'
             : status === 'speaking'
               ? 'bg-blue-500 hover:bg-blue-400 shadow-blue-500/40'
-              : 'bg-white hover:bg-white/90 shadow-white/25'
+              : isActive
+                ? 'bg-emerald-500 hover:bg-emerald-400 shadow-emerald-500/30'
+                : 'bg-white hover:bg-white/90 shadow-white/25'
       }`}
     >
       {status === 'processing' ? (
@@ -42,7 +47,9 @@ export default function MicButton({ status = 'idle', language = 'en', onTap, com
       ) : status === 'speaking' ? (
         <SoundWave />
       ) : status === 'listening' ? (
-        <Square className="w-7 h-7 text-white fill-white rounded-sm" />
+        <SoundWave />
+      ) : isActive ? (
+        <MicOff className="w-8 h-8 text-white" />
       ) : (
         <Mic className="w-8 h-8 text-[#145A3C]" />
       )}

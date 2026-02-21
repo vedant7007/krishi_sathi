@@ -37,12 +37,13 @@ export function FarmProvider({ children }) {
   const [advisory, setAdvisory] = useState(null);
 
   // --------------- Language ---------------
-  // Initialize from stored preference, then fall back to user's registered language, then 'en'
+  // If logged in, always use the user's registered language on reload.
+  // Only fall back to localStorage (session override) when not logged in.
   const [language, setLanguageState] = useState(() => {
-    const stored = getStored(STORAGE_KEYS.language);
-    if (stored) return stored;
     const storedUser = getStored(STORAGE_KEYS.user, null, true);
     if (storedUser && storedUser.language) return storedUser.language;
+    const stored = getStored(STORAGE_KEYS.language);
+    if (stored) return stored;
     return 'en';
   });
 
@@ -81,9 +82,9 @@ export function FarmProvider({ children }) {
   }, [language]);
 
   // Sync language when user changes (e.g., after login/registration)
-  // If the user has a preferred language and it differs from current, update it
+  // Always apply the user's registered language on login
   useEffect(() => {
-    if (user && user.language && user.language !== language) {
+    if (user && user.language) {
       setLanguageState(user.language);
     }
   }, [user]); // eslint-disable-line react-hooks/exhaustive-deps

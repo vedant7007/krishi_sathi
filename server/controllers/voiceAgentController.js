@@ -231,7 +231,17 @@ exports.requestCallback = async (req, res, next) => {
 
     const lang = user.language || 'en';
     const voiceConfig = getVoiceConfig(lang);
-    const baseUrl = process.env.BASE_URL;
+
+    // Auto-detect base URL: prefer BASE_URL env, fall back to Railway public domain, then request origin
+    let baseUrl = process.env.BASE_URL;
+    if (!baseUrl || baseUrl.includes('localhost')) {
+      const railwayDomain = process.env.RAILWAY_PUBLIC_DOMAIN;
+      if (railwayDomain) {
+        baseUrl = `https://${railwayDomain}`;
+      } else {
+        baseUrl = `${req.protocol}://${req.get('host')}`;
+      }
+    }
 
     if (!baseUrl) {
       return res.status(500).json({ success: false, message: 'BASE_URL not configured' });
@@ -250,7 +260,7 @@ exports.requestCallback = async (req, res, next) => {
       from: process.env.TWILIO_PHONE_NUMBER,
       url: `${baseUrl}/api/voice/incoming?userId=${user._id}&lang=${lang}`,
       statusCallback: `${baseUrl}/api/voice/status`,
-      statusCallbackEvent: ['completed', 'failed', 'no-answer'],
+      statusCallbackEvent: ['completed'],
     });
 
     console.log(`[Callback] Call initiated to ${normalizedPhone} | SID: ${call.sid}`);

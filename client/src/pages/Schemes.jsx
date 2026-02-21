@@ -246,7 +246,7 @@ function SchemeCard({ scheme, user, t }) {
               <ul className="space-y-1">
                 {(Array.isArray(scheme.documents)
                   ? scheme.documents
-                  : scheme.documents.split(/[,;]\s*/)
+                  : (scheme.documents?.split(/[,;]\s*/) || [])
                 ).map((doc, i) => (
                   <li key={i} className="text-sm text-gray-700 flex items-start gap-1">
                     <span className="text-gray-400">&#8226;</span>

@@ -62,6 +62,18 @@ exports.createAlert = async (req, res, next) => {
       conditions.length > 0 ? userFilter : {}
     );
 
+    // Normalize channels to object format for DB storage
+    let channelsObj;
+    if (Array.isArray(channels)) {
+      channelsObj = {
+        sms: channels.includes('sms'),
+        whatsapp: channels.includes('whatsapp'),
+        voice: channels.includes('voice'),
+      };
+    } else {
+      channelsObj = channels || { sms: true, whatsapp: false, voice: false };
+    }
+
     // Create alert log
     const alert = await AlertLog.create({
       type,
@@ -71,7 +83,7 @@ exports.createAlert = async (req, res, next) => {
       affectedDistricts: affectedDistricts || [],
       affectedStates: affectedStates || [],
       affectedCrops: affectedCrops || [],
-      channels: channels || { sms: true, whatsapp: false, voice: false },
+      channels: channelsObj,
       recipientCount,
       sentBy: req.user._id,
       status: 'pending',
@@ -79,11 +91,16 @@ exports.createAlert = async (req, res, next) => {
 
     // --- Twilio broadcasting ---
     // Determine which channel names to broadcast on
-    const alertChannels = [];
-    const ch = channels || { sms: true, whatsapp: false, voice: false };
-    if (ch.sms) alertChannels.push('sms');
-    if (ch.whatsapp) alertChannels.push('whatsapp');
-    if (ch.voice) alertChannels.push('voice');
+    // Handle both array format ['sms','whatsapp'] and object format {sms:true,whatsapp:false}
+    let alertChannels = [];
+    if (Array.isArray(channels)) {
+      alertChannels = channels;
+    } else {
+      const ch = channels || { sms: true, whatsapp: false, voice: false };
+      if (ch.sms) alertChannels.push('sms');
+      if (ch.whatsapp) alertChannels.push('whatsapp');
+      if (ch.voice) alertChannels.push('voice');
+    }
 
     // Query for the actual user documents (phone + alertPreferences) to pass to Twilio
     const recipients = await User.find(
@@ -166,6 +183,19 @@ exports.getAlerts = async (req, res) => {
       success: false,
       message: 'Failed to retrieve alerts',
     });
+  }
+};
+
+// DELETE /api/emergency/alerts/:id (admin only)
+exports.deleteAlert = async (req, res, next) => {
+  try {
+    const alert = await AlertLog.findByIdAndDelete(req.params.id);
+    if (!alert) {
+      return res.status(404).json({ success: false, message: 'Alert not found' });
+    }
+    res.json({ success: true, data: { alert }, message: 'Alert deleted successfully' });
+  } catch (error) {
+    next(error);
   }
 };
 

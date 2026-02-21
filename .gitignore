@@ -8,6 +8,7 @@ figma-export/
 .claude/
 *.zip
 *.pdf
+docs/
 server/.translation-cache/
 __pycache__/
 *.pyc

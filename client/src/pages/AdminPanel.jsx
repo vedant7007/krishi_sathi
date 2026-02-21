@@ -12,7 +12,19 @@ import {
   createScheme,
   getNewsItems,
   createNewsItem,
+  updateCropRule,
+  deleteCropRule,
+  updatePrice,
+  deletePrice,
+  updateScheme,
+  deleteScheme,
+  updateNews,
+  deleteNews,
+  getUsers,
+  deleteUser,
+  updateUserRole,
 } from '../services/adminService';
+import { getAlerts, deleteAlert as deleteAlertApi } from '../services/emergencyService';
 import {
   LayoutDashboard,
   Users,
@@ -26,6 +38,11 @@ import {
   X,
   Save,
   RefreshCw,
+  Trash2,
+  Pencil,
+  Search,
+  Shield,
+  Bell,
 } from 'lucide-react';
 
 const TABS = [
@@ -33,6 +50,8 @@ const TABS = [
   { key: 'prices', label: 'Market Prices', icon: TrendingUp },
   { key: 'schemes', label: 'Schemes', icon: FileText },
   { key: 'news', label: 'News', icon: Newspaper },
+  { key: 'users', label: 'Users', icon: Users },
+  { key: 'alerts', label: 'Alerts', icon: Bell },
 ];
 
 function StatCard({ icon: Icon, label, value, color }) {
@@ -106,9 +125,12 @@ function DataTable({ columns, data, onRefresh, refreshing }) {
   );
 }
 
-function AddModal({ title, fields, onSubmit, onClose, loading }) {
+function AddModal({ title, fields, onSubmit, onClose, loading, initialData }) {
   const [form, setForm] = useState(() =>
-    fields.reduce((acc, f) => ({ ...acc, [f.key]: f.defaultValue || '' }), {})
+    fields.reduce((acc, f) => ({
+      ...acc,
+      [f.key]: initialData?.[f.key] ?? f.defaultValue ?? '',
+    }), {})
   );
 
   const handleChange = (key, value) => {
@@ -183,7 +205,7 @@ function AddModal({ title, fields, onSubmit, onClose, loading }) {
             ) : (
               <>
                 <Save className="w-5 h-5" />
-                Save
+                {initialData ? 'Update' : 'Save'}
               </>
             )}
           </button>
@@ -193,7 +215,31 @@ function AddModal({ title, fields, onSubmit, onClose, loading }) {
   );
 }
 
-// Field definitions for the Add modals
+function ConfirmDialog({ message, onConfirm, onCancel }) {
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl shadow-lg w-full max-w-sm p-6">
+        <p className="text-gray-800 font-medium mb-4">{message}</p>
+        <div className="flex gap-3 justify-end">
+          <button
+            onClick={onCancel}
+            className="px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-100 rounded-lg"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            className="px-4 py-2 text-sm font-semibold text-white bg-red-600 hover:bg-red-700 rounded-lg"
+          >
+            Confirm
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Field definitions for the Add/Edit modals
 const RULE_FIELDS = [
   {
     key: 'crop',
@@ -201,16 +247,8 @@ const RULE_FIELDS = [
     type: 'select',
     required: true,
     options: [
-      'cotton',
-      'rice',
-      'wheat',
-      'maize',
-      'tomato',
-      'groundnut',
-      'soybean',
-      'sugarcane',
-      'onion',
-      'chilli',
+      'cotton', 'rice', 'wheat', 'maize', 'tomato',
+      'groundnut', 'soybean', 'sugarcane', 'onion', 'chilli',
     ],
   },
   {
@@ -240,16 +278,8 @@ const PRICE_FIELDS = [
     type: 'select',
     required: true,
     options: [
-      'cotton',
-      'rice',
-      'wheat',
-      'maize',
-      'tomato',
-      'groundnut',
-      'soybean',
-      'sugarcane',
-      'onion',
-      'chilli',
+      'cotton', 'rice', 'wheat', 'maize', 'tomato',
+      'groundnut', 'soybean', 'sugarcane', 'onion', 'chilli',
     ],
   },
   { key: 'mandi', label: 'Mandi Name', type: 'text', required: true },
@@ -305,8 +335,11 @@ export default function AdminPanel() {
   const [showModal, setShowModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [editItem, setEditItem] = useState(null);
+  const [showConfirm, setShowConfirm] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
-  // Fetch stats — API returns { success, data: { users: {...}, cropRules, ... } }
+  // Fetch stats
   useEffect(() => {
     getStats()
       .then((res) => setStats(res?.data || res))
@@ -333,14 +366,20 @@ export default function AdminPanel() {
         case 'news':
           data = await getNewsItems();
           break;
+        case 'users':
+          data = await getUsers(searchQuery ? { search: searchQuery } : {});
+          break;
+        case 'alerts':
+          data = await getAlerts();
+          break;
         default:
           data = [];
       }
-      // Extract array from nested API response: { success, data: { cropRules: [...] } }
       const inner = data?.data || data;
       const arr = Array.isArray(inner)
         ? inner
-        : inner?.cropRules || inner?.rules || inner?.prices || inner?.schemes || inner?.news || inner?.articles || [];
+        : inner?.cropRules || inner?.rules || inner?.prices || inner?.schemes
+          || inner?.news || inner?.articles || inner?.users || inner?.alerts || [];
       setTabData(Array.isArray(arr) ? arr : []);
     } catch (err) {
       setError(err?.response?.data?.message || t('common.error'));
@@ -356,37 +395,122 @@ export default function AdminPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
 
-  // Redirect non-admin users (AFTER all hooks to avoid hooks violation)
+  // Redirect non-admin users (AFTER all hooks)
   if (user?.role !== 'admin') {
     return <Navigate to="/" replace />;
   }
 
-  // Handle add new
+  // Handle add / edit
   const handleAddNew = async (formData) => {
     setSaving(true);
     setError('');
     try {
-      switch (activeTab) {
-        case 'rules':
-          await createAdvisoryRule(formData);
-          break;
-        case 'prices':
-          await createMarketPrice(formData);
-          break;
-        case 'schemes':
-          await createScheme(formData);
-          break;
-        case 'news':
-          await createNewsItem(formData);
-          break;
+      if (editItem) {
+        switch (activeTab) {
+          case 'rules': await updateCropRule(editItem._id, formData); break;
+          case 'prices': await updatePrice(editItem._id, formData); break;
+          case 'schemes': await updateScheme(editItem._id, formData); break;
+          case 'news': await updateNews(editItem._id, formData); break;
+        }
+      } else {
+        switch (activeTab) {
+          case 'rules': await createAdvisoryRule(formData); break;
+          case 'prices': await createMarketPrice(formData); break;
+          case 'schemes': await createScheme(formData); break;
+          case 'news': await createNewsItem(formData); break;
+        }
       }
       setShowModal(false);
+      setEditItem(null);
       fetchTabData();
     } catch (err) {
       setError(err?.response?.data?.message || t('common.error'));
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleEdit = (item) => {
+    setEditItem(item);
+    setShowModal(true);
+  };
+
+  const handleDelete = (item) => {
+    setShowConfirm({
+      action: 'delete',
+      item,
+      message: `Are you sure you want to delete "${item.name || item.title || item.crop || 'this item'}"?`,
+    });
+  };
+
+  const confirmDelete = async () => {
+    const item = showConfirm.item;
+    setShowConfirm(null);
+    setError('');
+    try {
+      switch (activeTab) {
+        case 'rules': await deleteCropRule(item._id); break;
+        case 'prices': await deletePrice(item._id); break;
+        case 'schemes': await deleteScheme(item._id); break;
+        case 'news': await deleteNews(item._id); break;
+        case 'users': await deleteUser(item._id); break;
+        case 'alerts': await deleteAlertApi(item._id); break;
+      }
+      fetchTabData();
+      // Refresh stats too
+      getStats().then((res) => setStats(res?.data || res)).catch(() => {});
+    } catch (err) {
+      setError(err?.response?.data?.message || 'Failed to delete');
+    }
+  };
+
+  const handleRoleChange = (userItem) => {
+    const newRole = userItem.role === 'admin' ? 'farmer' : 'admin';
+    setShowConfirm({
+      action: 'role',
+      item: userItem,
+      newRole,
+      message: `Change ${userItem.name}'s role from "${userItem.role}" to "${newRole}"?`,
+    });
+  };
+
+  const confirmRoleChange = async () => {
+    const { item, newRole } = showConfirm;
+    setShowConfirm(null);
+    setError('');
+    try {
+      await updateUserRole(item._id, newRole);
+      fetchTabData();
+      getStats().then((res) => setStats(res?.data || res)).catch(() => {});
+    } catch (err) {
+      setError(err?.response?.data?.message || 'Failed to update role');
+    }
+  };
+
+  // Action buttons for editable tabs
+  const editDeleteActions = {
+    key: '_actions',
+    label: 'Actions',
+    render: (_, row) => (
+      <div className="flex gap-1">
+        <button onClick={() => handleEdit(row)} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded" title="Edit">
+          <Pencil className="w-4 h-4" />
+        </button>
+        <button onClick={() => handleDelete(row)} className="p-1.5 text-red-600 hover:bg-red-50 rounded" title="Delete">
+          <Trash2 className="w-4 h-4" />
+        </button>
+      </div>
+    ),
+  };
+
+  const deleteOnlyAction = {
+    key: '_actions',
+    label: 'Actions',
+    render: (_, row) => (
+      <button onClick={() => handleDelete(row)} className="p-1.5 text-red-600 hover:bg-red-50 rounded" title="Delete">
+        <Trash2 className="w-4 h-4" />
+      </button>
+    ),
   };
 
   // Column definitions per tab
@@ -396,12 +520,14 @@ export default function AdminPanel() {
       { key: 'soilType', label: 'Soil' },
       { key: 'season', label: 'Season' },
       { key: 'mspPrice', label: 'MSP', render: (v) => (v ? `\u20B9${v}` : '--') },
+      editDeleteActions,
     ],
     prices: [
       { key: 'crop', label: 'Crop' },
       { key: 'mandi', label: 'Mandi' },
       { key: 'state', label: 'State' },
       { key: 'modal_price', label: 'Price', render: (v) => (v ? `\u20B9${v}` : '--') },
+      editDeleteActions,
     ],
     schemes: [
       { key: 'name', label: 'Name' },
@@ -411,19 +537,12 @@ export default function AdminPanel() {
         key: 'status',
         label: 'Status',
         render: (v) => (
-          <span
-            className={
-              v === 'active'
-                ? 'badge-green'
-                : v === 'closed'
-                ? 'badge-red'
-                : 'badge-blue'
-            }
-          >
+          <span className={v === 'active' ? 'badge-green' : v === 'closed' ? 'badge-red' : 'badge-blue'}>
             {v?.toUpperCase() || 'ACTIVE'}
           </span>
         ),
       },
+      editDeleteActions,
     ],
     news: [
       { key: 'title', label: 'Title' },
@@ -433,13 +552,75 @@ export default function AdminPanel() {
         key: 'createdAt',
         label: 'Date',
         render: (v) =>
-          v
-            ? new Date(v).toLocaleDateString('en-IN', {
-                day: 'numeric',
-                month: 'short',
-              })
-            : '--',
+          v ? new Date(v).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '--',
       },
+      editDeleteActions,
+    ],
+    users: [
+      { key: 'name', label: 'Name' },
+      { key: 'phone', label: 'Phone' },
+      {
+        key: 'role',
+        label: 'Role',
+        render: (v) => (
+          <span className={v === 'admin' ? 'badge-blue' : 'badge-green'}>
+            {v?.toUpperCase()}
+          </span>
+        ),
+      },
+      { key: 'primaryCrop', label: 'Crop', render: (v) => v ? v.charAt(0).toUpperCase() + v.slice(1) : '--' },
+      { key: 'district', label: 'District' },
+      { key: 'state', label: 'State' },
+      {
+        key: 'createdAt',
+        label: 'Joined',
+        render: (v) =>
+          v ? new Date(v).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: '2-digit' }) : '--',
+      },
+      {
+        key: '_actions',
+        label: 'Actions',
+        render: (_, row) => (
+          <div className="flex gap-1">
+            <button onClick={() => handleRoleChange(row)} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded" title="Change Role">
+              <Shield className="w-4 h-4" />
+            </button>
+            <button onClick={() => handleDelete(row)} className="p-1.5 text-red-600 hover:bg-red-50 rounded" title="Delete">
+              <Trash2 className="w-4 h-4" />
+            </button>
+          </div>
+        ),
+      },
+    ],
+    alerts: [
+      { key: 'title', label: 'Title' },
+      { key: 'type', label: 'Type' },
+      {
+        key: 'severity',
+        label: 'Severity',
+        render: (v) => (
+          <span className={v === 'CRITICAL' ? 'badge-red' : v === 'WARNING' ? 'badge-yellow' : 'badge-blue'}>
+            {v}
+          </span>
+        ),
+      },
+      {
+        key: 'status',
+        label: 'Status',
+        render: (v) => (
+          <span className={v === 'sent' ? 'badge-green' : v === 'failed' ? 'badge-red' : 'badge-blue'}>
+            {v?.toUpperCase()}
+          </span>
+        ),
+      },
+      { key: 'recipientCount', label: 'Recipients' },
+      {
+        key: 'createdAt',
+        label: 'Date',
+        render: (v) =>
+          v ? new Date(v).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '--',
+      },
+      deleteOnlyAction,
     ],
   };
 
@@ -501,16 +682,33 @@ export default function AdminPanel() {
           ))}
         </div>
 
-        {/* Add New Button */}
-        <div className="flex justify-end">
-          <button
-            onClick={() => setShowModal(true)}
-            className="btn-primary text-sm px-4"
-          >
-            <Plus className="w-4 h-4" />
-            Add New
-          </button>
-        </div>
+        {/* Search bar for Users tab */}
+        {activeTab === 'users' && (
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Search by name or phone..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && fetchTabData()}
+              className="input-field pl-10 w-full"
+            />
+          </div>
+        )}
+
+        {/* Add New Button — hidden for users and alerts */}
+        {!['users', 'alerts'].includes(activeTab) && (
+          <div className="flex justify-end">
+            <button
+              onClick={() => { setEditItem(null); setShowModal(true); }}
+              className="btn-primary text-sm px-4"
+            >
+              <Plus className="w-4 h-4" />
+              Add New
+            </button>
+          </div>
+        )}
 
         {/* Data Table */}
         <div className="card">
@@ -530,14 +728,24 @@ export default function AdminPanel() {
           )}
         </div>
 
-        {/* Add Modal */}
-        {showModal && (
+        {/* Add/Edit Modal */}
+        {showModal && fieldMap[activeTab] && (
           <AddModal
-            title={`Add New ${activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}`}
-            fields={fieldMap[activeTab] || []}
+            title={editItem ? `Edit ${activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}` : `Add New ${activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}`}
+            fields={fieldMap[activeTab]}
             onSubmit={handleAddNew}
-            onClose={() => setShowModal(false)}
+            onClose={() => { setShowModal(false); setEditItem(null); }}
             loading={saving}
+            initialData={editItem}
+          />
+        )}
+
+        {/* Confirm Dialog */}
+        {showConfirm && (
+          <ConfirmDialog
+            message={showConfirm.message}
+            onConfirm={showConfirm.action === 'role' ? confirmRoleChange : confirmDelete}
+            onCancel={() => setShowConfirm(null)}
           />
         )}
       </div>

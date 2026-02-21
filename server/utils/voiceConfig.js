@@ -1,7 +1,7 @@
 const VOICE_CONFIG = {
   hi: {
     name: 'Hindi',
-    murfVoiceId: 'hi-IN-kabir',
+    murfVoiceId: 'hi-IN-shaan',
     murfStyle: 'Conversational',
     deepgramLang: 'hi',
     twimlLang: 'hi-IN',
@@ -33,7 +33,7 @@ const VOICE_CONFIG = {
   },
   en: {
     name: 'English',
-    murfVoiceId: 'en-IN-aarav',
+    murfVoiceId: 'en-IN-rohan',
     murfStyle: 'Conversational',
     deepgramLang: 'en',
     twimlLang: 'en-IN',

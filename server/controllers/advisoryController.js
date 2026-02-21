@@ -68,7 +68,9 @@ exports.getAdvisory = async (req, res, next) => {
     // Gemini AI fallback: generate advisory for crops not in DB
     if (!advisory) {
       try {
-        const aiAdvisory = await generateAdvisory(cropLower, soilLower, seasonLower);
+        // Generate directly in target language to avoid translation failures
+        const targetLang = (lang && lang !== 'en') ? lang : null;
+        const aiAdvisory = await generateAdvisory(cropLower, soilLower, seasonLower, targetLang);
         if (aiAdvisory) {
           let finalAdvisory = {
             crop: cropLower,
@@ -77,14 +79,7 @@ exports.getAdvisory = async (req, res, next) => {
             ...aiAdvisory,
             _aiGenerated: true,
           };
-
-          if (lang && lang !== 'en') {
-            try {
-              const { fertilizer, irrigation, pest, sowing, harvest } = finalAdvisory;
-              const translated = await translateJSON({ fertilizer, irrigation, pest, sowing, harvest }, lang);
-              finalAdvisory = { ...finalAdvisory, ...translated };
-            } catch { /* use untranslated */ }
-          }
+          console.log(`[Advisory] AI advisory generated${targetLang ? ` in ${targetLang}` : ''} for ${cropLower}`);
 
           return res.json({
             success: true,
@@ -124,9 +119,13 @@ exports.getAdvisory = async (req, res, next) => {
     if (lang && lang !== 'en') {
       try {
         const { fertilizer, irrigation, pest, sowing, harvest } = safeAdvisory;
+        console.log(`[Advisory] Translating to ${lang} for crop: ${cropLower}`);
         const translated = await translateJSON({ fertilizer, irrigation, pest, sowing, harvest }, lang);
         finalAdvisory = { ...safeAdvisory, ...translated };
-      } catch { /* use untranslated */ }
+        console.log(`[Advisory] Translation done for ${lang}`);
+      } catch (err) {
+        console.error(`[Advisory] Translation failed for ${lang}:`, err.message);
+      }
     }
 
     res.json({

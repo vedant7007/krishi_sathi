@@ -383,6 +383,10 @@ export default function CropAdvisory() {
       setError(t('auth.fillAllFields', 'Please select all fields'));
       return;
     }
+    if (compatWarning) {
+      setError(t('advisory.soilIncompatibleShort', 'This crop-soil combination is not compatible. Please change your selection.'));
+      return;
+    }
 
     setError('');
     setLoading(true);
@@ -527,8 +531,8 @@ export default function CropAdvisory() {
 
           <button
             onClick={handleGetAdvisory}
-            disabled={loading}
-            className="btn-primary w-full"
+            disabled={loading || !!compatWarning}
+            className={`btn-primary w-full ${compatWarning ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
             {loading ? (
               <Loader2 className="w-5 h-5 animate-spin" />

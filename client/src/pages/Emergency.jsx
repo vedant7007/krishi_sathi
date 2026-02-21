@@ -401,8 +401,14 @@ export default function Emergency() {
     setError('');
     setSuccess('');
     try {
-      await broadcastAlert(formData);
-      setSuccess(t('emergency.broadcastSuccess'));
+      const result = await broadcastAlert(formData);
+      const delivery = result?.data?.delivery || {};
+      const recipients = result?.data?.recipientCount || 0;
+      const sent = delivery.sent || 0;
+      const failed = delivery.failed || 0;
+      setSuccess(
+        `${t('emergency.broadcastSuccess')} — ${recipients} recipients, ${sent} messages sent${failed > 0 ? `, ${failed} failed` : ''}`
+      );
       // Refresh alerts
       const response = await getAlerts();
       const inner = response?.data || response;

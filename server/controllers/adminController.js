@@ -382,6 +382,93 @@ exports.deleteNews = async (req, res, next) => {
   }
 };
 
+// ==================== User Management ====================
+
+// GET /api/admin/users
+exports.getUsers = async (req, res) => {
+  try {
+    const { search, role } = req.query;
+    const filter = {};
+    if (search) {
+      const regex = new RegExp(search, 'i');
+      filter.$or = [{ name: regex }, { phone: regex }];
+    }
+    if (role) filter.role = role;
+
+    const users = await User.find(filter)
+      .select('-password -faceEncoding -webauthnCredentials')
+      .sort({ createdAt: -1 });
+
+    res.json({
+      success: true,
+      data: { users, count: users.length },
+      message: `Found ${users.length} users`,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to retrieve users' });
+  }
+};
+
+// DELETE /api/admin/users/:id
+exports.deleteUser = async (req, res, next) => {
+  try {
+    if (req.params.id === req.user._id.toString()) {
+      return res.status(400).json({ success: false, message: 'Cannot delete your own account' });
+    }
+    const user = await User.findByIdAndDelete(req.params.id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+    res.json({ success: true, data: { user }, message: 'User deleted successfully' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// PUT /api/admin/users/:id/role
+exports.updateUserRole = async (req, res, next) => {
+  try {
+    const { role } = req.body;
+    if (!['farmer', 'admin'].includes(role)) {
+      return res.status(400).json({ success: false, message: 'Role must be farmer or admin' });
+    }
+    if (req.params.id === req.user._id.toString()) {
+      return res.status(400).json({ success: false, message: 'Cannot change your own role' });
+    }
+    const user = await User.findByIdAndUpdate(
+      req.params.id, { role }, { new: true, runValidators: true }
+    ).select('-password -faceEncoding -webauthnCredentials');
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+    res.json({ success: true, data: { user }, message: `User role updated to ${role}` });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ==================== Missing GET endpoints ====================
+
+// GET /api/admin/schemes
+exports.getAdminSchemes = async (req, res) => {
+  try {
+    const schemes = await GovernmentScheme.find().sort({ createdAt: -1 });
+    res.json({ success: true, data: { schemes, count: schemes.length }, message: `Found ${schemes.length} schemes` });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to retrieve schemes' });
+  }
+};
+
+// GET /api/admin/news
+exports.getAdminNews = async (req, res) => {
+  try {
+    const news = await News.find().sort({ createdAt: -1 });
+    res.json({ success: true, data: { news, count: news.length }, message: `Found ${news.length} news articles` });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to retrieve news' });
+  }
+};
+
 // ==================== Dashboard Stats ====================
 
 // GET /api/admin/stats

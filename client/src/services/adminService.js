@@ -98,3 +98,14 @@ export const updateNews = (id, data) =>
 
 export const deleteNews = (id) =>
   api.delete(`/admin/news/${id}`).then((res) => res.data);
+
+// ===================== Users =====================
+
+export const getUsers = (params = {}) =>
+  api.get('/admin/users', { params }).then((res) => res.data);
+
+export const deleteUser = (id) =>
+  api.delete(`/admin/users/${id}`).then((res) => res.data);
+
+export const updateUserRole = (id, role) =>
+  api.put(`/admin/users/${id}/role`, { role }).then((res) => res.data);

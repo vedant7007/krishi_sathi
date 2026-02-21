@@ -28,3 +28,9 @@ export const getAlerts = () => {
  */
 export const getAlertStats = () =>
   api.get('/emergency/stats').then((res) => res.data);
+
+/**
+ * Delete an emergency alert (admin only).
+ */
+export const deleteAlert = (id) =>
+  api.delete(`/emergency/alerts/${id}`).then((res) => res.data);

@@ -28,7 +28,9 @@ function say(text, voiceConfig) {
  * Build a TwiML <Gather> that listens for speech input, then routes to a URL.
  */
 function gatherSpeech(actionUrl, voiceConfig, prompt, timeout = 5) {
-  return `<Gather input="speech" action="${actionUrl}" language="${voiceConfig.twimlLang}" speechTimeout="auto" timeout="${timeout}">
+  // Escape & to &amp; for valid XML (TwiML is XML)
+  const safeUrl = actionUrl.replace(/&/g, '&amp;');
+  return `<Gather input="speech" action="${safeUrl}" language="${voiceConfig.twimlLang}" speechTimeout="auto" timeout="${timeout}">
   ${say(prompt, voiceConfig)}
 </Gather>`;
 }
