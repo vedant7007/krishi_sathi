@@ -6,8 +6,8 @@ export const getAgentToken = () =>
 export const getAgentContext = () =>
   api.post('/agent/context').then((res) => res.data);
 
-export const processVoiceQuery = (text, language) =>
-  api.post('/agent/process', { text, language }).then((res) => res.data);
+export const processVoiceQuery = (text, language, history = []) =>
+  api.post('/agent/process', { text, language, history }).then((res) => res.data);
 
 export const generateTTS = (text, language) =>
   api

@@ -38,8 +38,12 @@ const alertLogSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['pending', 'sending', 'sent', 'failed'],
+    enum: ['pending', 'sending', 'sent', 'failed', 'partial'],
     default: 'pending',
+  },
+  deliverySummary: {
+    sent: { type: Number, default: 0 },
+    failed: { type: Number, default: 0 },
   },
 }, {
   timestamps: true,

@@ -61,17 +61,18 @@ exports.getContext = async (req, res, next) => {
 // ─── POST /api/agent/process — Process Voice Query ───
 exports.processVoiceQuery = async (req, res, next) => {
   try {
-    const { text, language } = req.body;
+    const { text, language, history } = req.body;
 
     if (!text) {
       return res.status(400).json({ success: false, message: 'Text is required' });
     }
 
     const lang = language || req.user.language || 'en';
+    const conversationHistory = Array.isArray(history) ? history.slice(-6) : [];
 
-    console.log(`[Agent Process] ${req.user.name} (${lang}): "${text}"`);
+    console.log(`[Agent Process] ${req.user.name} (${lang}): "${text}" [${conversationHistory.length} history]`);
 
-    // Load context + call AI with a hard 12s timeout so voice agent stays responsive
+    // Load context + call AI with a 15s timeout so voice agent stays responsive
     const timeoutFallback = {
       hi: 'Maaf keejiye ji, abhi server par load hai. Thodi der mein dobara poochiye.',
       te: 'Kshaminchandi garu, server lo load ekkuva undi. Koddisepatiki malli adagandi.',
@@ -83,13 +84,13 @@ exports.processVoiceQuery = async (req, res, next) => {
       const result = await Promise.race([
         (async () => {
           const context = await getFarmerContext(req.user);
-          return askFarmingAgent(text, context, lang);
+          return askFarmingAgent(text, context, lang, conversationHistory);
         })(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('VOICE_TIMEOUT')), 12000)),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('VOICE_TIMEOUT')), 15000)),
       ]);
       responseText = result;
     } catch (err) {
-      console.warn(`[Agent Process] ${err.message === 'VOICE_TIMEOUT' ? 'Timed out after 12s' : err.message}`);
+      console.warn(`[Agent Process] ${err.message === 'VOICE_TIMEOUT' ? 'Timed out after 15s' : err.message}`);
       responseText = timeoutFallback[lang] || timeoutFallback.en;
     }
 
@@ -144,7 +145,7 @@ exports.generateTTS = async (req, res, next) => {
       return fallbackToDeepgramTTS(text, lang, res, next);
     }
 
-    // Call Murf API
+    // Call Murf API (8s timeout for voice responsiveness)
     const murfResponse = await axios({
       method: 'POST',
       url: 'https://api.murf.ai/v1/speech/generate',
@@ -156,12 +157,13 @@ exports.generateTTS = async (req, res, next) => {
         text,
         voiceId: voiceConfig.murfVoiceId,
         style: voiceConfig.murfStyle,
-        format: 'WAV',
+        format: 'MP3',
         sampleRate: 24000,
         channelType: 'MONO',
+        speed: 1,
       },
       responseType: 'arraybuffer',
-      timeout: 15000,
+      timeout: 8000,
     });
 
     const audioBuffer = Buffer.from(murfResponse.data);
@@ -176,7 +178,7 @@ exports.generateTTS = async (req, res, next) => {
       }
     }
 
-    res.set('Content-Type', 'audio/wav');
+    res.set('Content-Type', 'audio/mpeg');
     res.send(audioBuffer);
   } catch (error) {
     console.error('[TTS Murf] Error:', error.message);
@@ -194,6 +196,7 @@ async function fallbackToDeepgramTTS(text, language, res, next) {
     }
 
     console.log('[TTS] Falling back to Deepgram');
+    // Deepgram Aura voices — English only but high quality
     const model = 'aura-asteria-en';
 
     const response = await axios({
@@ -205,7 +208,7 @@ async function fallbackToDeepgramTTS(text, language, res, next) {
       },
       data: { text },
       responseType: 'arraybuffer',
-      timeout: 15000,
+      timeout: 8000,
     });
 
     res.set('Content-Type', 'audio/mpeg');

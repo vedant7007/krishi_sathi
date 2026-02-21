@@ -253,10 +253,16 @@ export default function useVoiceAgent(language = 'en') {
       setStatus('processing');
       setError(null);
 
+      // Build conversation history from recent messages (last 6 for context)
+      const history = messages.slice(-6).map((m) => ({
+        role: m.role,
+        content: m.content,
+      }));
+
       setMessages((prev) => [...prev.slice(-9), { role: 'user', content: text }]);
 
-      console.log('[VoiceAgent] Processing:', text);
-      const result = await processVoiceQuery(text, language);
+      console.log('[VoiceAgent] Processing:', text, `(${history.length} history msgs)`);
+      const result = await processVoiceQuery(text, language, history);
       console.log('[VoiceAgent] Result:', result);
 
       const responseText = result?.data?.text || result?.text || '';

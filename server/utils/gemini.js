@@ -259,7 +259,7 @@ ${JSON.stringify(toTranslate)}`;
  * Voice AI Agent — send farmer's message to Gemini with full context.
  * Returns short, voice-friendly response in the farmer's language.
  */
-exports.askFarmingAgent = async (userMessage, farmerContext, language = 'en') => {
+exports.askFarmingAgent = async (userMessage, farmerContext, language = 'en', conversationHistory = []) => {
   const langName = language === 'hi' ? 'Hindi' : language === 'te' ? 'Telugu' : 'English';
   const farmer = farmerContext?.farmer || {};
   const advisory = farmerContext?.advisory;
@@ -325,24 +325,34 @@ CROP ADVISORY: ${advisorySummary}
 MARKET PRICES: ${pricesSummary}
 GOVERNMENT SCHEMES: ${schemesSummary}
 
-RESPONSE RULES:
-1. Respond ONLY in ${langName}. If Hindi, use conversational Hindi (not formal). If Telugu, use conversational Telugu.
-2. Maximum 2-3 sentences. This is a voice call \u2014 farmer is LISTENING, not reading.
-3. Use "ji" suffix in Hindi, "garu" in Telugu. Be warm like a friendly advisor, not robotic.
-4. Give EXACT numbers from the data. Never say "check with local authority" \u2014 YOU are the authority.
-5. If data is unavailable, say so honestly: "Abhi yeh data mere paas nahi hai ji, lekin..."
-6. After answering, ask one SHORT follow-up: "Aur kuch poochna hai?" / "\u0c07\u0c02\u0c15\u0c47\u0c2e\u0c48\u0c28\u0c3e?" / "Anything else?"
-7. If farmer says goodbye words (bas/bye/dhanyavaad/shukriya/thanks), give warm goodbye + "Jai Kisan!"
-8. For weather: include specific dates, temperatures, and what farming action to take.
-9. For prices: include mandi name, exact price in rupees, and whether it's a good time to sell.
-10. For schemes: tell if they're eligible and how to apply.
-11. If farmer asks something outside farming, gently redirect: "Main kheti mein madad kar sakta hoon ji."`;
+RESPONSE RULES (CRITICAL \u2014 this is VOICE, farmer is listening with ears, not reading):
+1. Respond ONLY in ${langName}. Use natural, spoken ${langName} \u2014 like talking to a friend, NOT writing an essay.
+2. Keep it SHORT: 1-3 sentences MAX. No bullet points, no lists, no formatting.
+3. Use "ji" in Hindi, "garu" in Telugu. Sound warm, human, confident \u2014 like a trusted village elder.
+4. Give EXACT numbers from the data above. Never say "check with authorities" \u2014 YOU have the data.
+5. If you don't have data, be honest: "Abhi yeh data mere paas nahi hai ji" / "I don't have that right now."
+6. End with a VERY brief follow-up ONLY if the conversation just started: "Aur batao?" / "Anything else?"
+7. For goodbye words (bas/bye/dhanyavaad/thanks), give warm goodbye + "Jai Kisan!" \u2014 nothing else.
+8. NEVER use asterisks, markdown, or special characters. Plain spoken text only.
+9. For follow-up questions like "tell me more" or "aur batao", refer to the conversation history and expand.
+10. If farmer asks outside farming, briefly redirect: "Main kheti mein madad kar sakta hoon ji."`;
 
   const fallbacks = {
     hi: 'Maaf keejiye ji, abhi jawab mein thodi dikkat aa rahi hai. Kripya thodi der baad dobara poochiye.',
     te: 'Kshaminchandi garu, ippudu samasyam vachindi. Dayachesi koddisepatiki malli adagandi.',
     en: 'Sorry, I am having trouble responding right now. Please try again in a moment.',
   };
+
+  // Build messages array with conversation history for multi-turn
+  const claudeMessages = [];
+  if (conversationHistory.length > 0) {
+    for (const msg of conversationHistory) {
+      if (msg.role === 'user' || msg.role === 'assistant') {
+        claudeMessages.push({ role: msg.role, content: msg.content });
+      }
+    }
+  }
+  claudeMessages.push({ role: 'user', content: userMessage });
 
   // Try Claude Haiku first (cheap + fast + reliable), then Gemini as fallback
   if (process.env.ANTHROPIC_API_KEY) {
@@ -351,13 +361,13 @@ RESPONSE RULES:
       const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
       const msg = await anthropic.messages.create({
         model: 'claude-haiku-4-5-20251001',
-        max_tokens: 300,
+        max_tokens: 200,
         system: systemPrompt,
-        messages: [{ role: 'user', content: userMessage }],
+        messages: claudeMessages,
       });
       const text = msg.content?.[0]?.text;
       if (text) {
-        console.log('[askFarmingAgent] Claude Haiku responded');
+        console.log(`[askFarmingAgent] Claude Haiku responded (${claudeMessages.length} msgs)`);
         return text.trim();
       }
     } catch (err) {
@@ -365,8 +375,13 @@ RESPONSE RULES:
     }
   }
 
-  // Fallback to Gemini
-  const prompt = `${systemPrompt}\n\nFarmer: ${userMessage}\nKrishiSathi:`;
+  // Fallback to Gemini (include history as context)
+  let historyBlock = '';
+  if (conversationHistory.length > 0) {
+    historyBlock = '\n\nPrevious conversation:\n' +
+      conversationHistory.map((m) => `${m.role === 'user' ? 'Farmer' : 'KrishiSathi'}: ${m.content}`).join('\n') + '\n';
+  }
+  const prompt = `${systemPrompt}${historyBlock}\nFarmer: ${userMessage}\nKrishiSathi:`;
   try {
     const response = await exports.generate(prompt);
     return response.trim();
