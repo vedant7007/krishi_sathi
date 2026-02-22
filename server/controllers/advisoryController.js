@@ -119,12 +119,31 @@ exports.getAdvisory = async (req, res, next) => {
     if (lang && lang !== 'en') {
       try {
         const { fertilizer, irrigation, pest, sowing, harvest } = safeAdvisory;
-        console.log(`[Advisory] Translating to ${lang} for crop: ${cropLower}`);
+        console.log(`[Advisory] Translating DB advisory to ${lang} for crop: ${cropLower}`);
+        const original = JSON.stringify({ fertilizer, irrigation, pest, sowing, harvest });
         const translated = await translateJSON({ fertilizer, irrigation, pest, sowing, harvest }, lang);
-        finalAdvisory = { ...safeAdvisory, ...translated };
-        console.log(`[Advisory] Translation done for ${lang}`);
+        const translatedStr = JSON.stringify(translated);
+
+        // Check if translation actually worked (not just returning English)
+        if (original !== translatedStr) {
+          finalAdvisory = { ...safeAdvisory, ...translated };
+          console.log(`[Advisory] Translation done for ${lang}`);
+        } else {
+          // Translation returned English — regenerate via AI in target language
+          console.log(`[Advisory] Translation unchanged, regenerating via AI in ${lang}`);
+          const aiAdvisory = await generateAdvisory(cropLower, soilLower, seasonLower, lang);
+          if (aiAdvisory) {
+            finalAdvisory = { ...safeAdvisory, ...aiAdvisory };
+            console.log(`[Advisory] AI regeneration in ${lang} succeeded`);
+          }
+        }
       } catch (err) {
         console.error(`[Advisory] Translation failed for ${lang}:`, err.message);
+        // Last resort: try AI generation directly in target language
+        try {
+          const aiAdvisory = await generateAdvisory(cropLower, soilLower, seasonLower, lang);
+          if (aiAdvisory) finalAdvisory = { ...safeAdvisory, ...aiAdvisory };
+        } catch { /* use English fallback */ }
       }
     }
 

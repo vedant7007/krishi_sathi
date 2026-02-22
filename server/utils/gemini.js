@@ -213,7 +213,32 @@ ${JSON.stringify(obj)}`;
     }
     return parsed;
   } catch (geminiErr) {
-    console.log(`[translateJSON] Gemini failed (${geminiErr.message?.substring(0, 60)}), trying Google Translate for ${langName}`);
+    console.log(`[translateJSON] Gemini failed (${geminiErr.message?.substring(0, 60)}), trying Claude for ${langName}`);
+
+    // Fallback 2: Claude Haiku (separate API, not affected by Gemini rate limits)
+    if (process.env.ANTHROPIC_API_KEY) {
+      try {
+        const Anthropic = require('@anthropic-ai/sdk');
+        const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+        const msg = await anthropic.messages.create({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 4096,
+          messages: [{ role: 'user', content: prompt }],
+        });
+        const claudeResult = msg.content?.[0]?.text || '';
+        const cleaned = claudeResult.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+        const parsed = JSON.parse(cleaned);
+        console.log(`[translateJSON] Claude translated to ${langName}`);
+        if (didTranslate(obj, parsed)) {
+          setCache(cacheKey, parsed);
+        }
+        return parsed;
+      } catch (claudeErr) {
+        console.log(`[translateJSON] Claude failed (${claudeErr.message?.substring(0, 60)}), trying Google Translate for ${langName}`);
+      }
+    }
+
+    // Fallback 3: Google Translate (free, but poor for technical content)
     try {
       const result = await googleTranslateObj(obj, targetLang);
       if (didTranslate(obj, result)) {
@@ -280,8 +305,40 @@ ${JSON.stringify(toTranslate)}`;
     setCache(cacheKey, merged);
     return merged;
   } catch (geminiErr) {
-    // Fallback: free Google Translate
-    console.log(`[translateBatch] Gemini failed, using Google Translate fallback for ${langName}`);
+    // Fallback 2: Claude Haiku
+    if (process.env.ANTHROPIC_API_KEY) {
+      try {
+        console.log(`[translateBatch] Gemini failed, trying Claude for ${langName}`);
+        const Anthropic = require('@anthropic-ai/sdk');
+        const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+        const msg = await anthropic.messages.create({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 4096,
+          messages: [{ role: 'user', content: prompt }],
+        });
+        const claudeResult = msg.content?.[0]?.text || '';
+        const cleaned = claudeResult.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+        const parsed = JSON.parse(cleaned);
+        if (!Array.isArray(parsed)) throw new Error('Not an array');
+
+        const merged = items.map((item, idx) => {
+          const translated = parsed.find((p) => p._i === idx) || parsed[idx];
+          if (!translated) return item;
+          const copy = { ...item };
+          fields.forEach((f) => { if (translated[f]) copy[f] = translated[f]; });
+          return copy;
+        });
+
+        console.log(`[translateBatch] Claude translated ${items.length} items to ${langName}`);
+        setCache(cacheKey, merged);
+        return merged;
+      } catch (claudeErr) {
+        console.log(`[translateBatch] Claude failed (${claudeErr.message?.substring(0, 60)}), trying Google Translate`);
+      }
+    }
+
+    // Fallback 3: free Google Translate
+    console.log(`[translateBatch] Using Google Translate fallback for ${langName}`);
     try {
       const merged = await googleTranslateBatch(items, fields, targetLang);
       console.log(`[translateBatch] Google Translate: ${items.length} items to ${langName}`);
@@ -483,7 +540,31 @@ Return ONLY valid JSON (no markdown fences) with this exact structure:
   }
 }`;
 
-  const result = await exports.generate(prompt);
+  // Try Gemini first, fall back to Claude if rate limited
+  let result;
+  try {
+    result = await exports.generate(prompt);
+  } catch (geminiErr) {
+    console.log(`[generateAdvisory] Gemini failed, trying Claude for ${crop}`);
+    if (process.env.ANTHROPIC_API_KEY) {
+      try {
+        const Anthropic = require('@anthropic-ai/sdk');
+        const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+        const msg = await anthropic.messages.create({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 4096,
+          messages: [{ role: 'user', content: prompt }],
+        });
+        result = msg.content?.[0]?.text || '';
+      } catch (claudeErr) {
+        console.error(`[generateAdvisory] Claude also failed:`, claudeErr.message?.substring(0, 80));
+        return null;
+      }
+    } else {
+      return null;
+    }
+  }
+
   try {
     const cleaned = result.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
     return JSON.parse(cleaned);

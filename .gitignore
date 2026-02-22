@@ -12,3 +12,6 @@ docs/
 server/.translation-cache/
 __pycache__/
 *.pyc
+.vercel
+.vscode/
+*.tsbuildinfo
