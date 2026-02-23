@@ -5,9 +5,9 @@ import { requestCallback } from '../services/agentApi';
 import { Phone, X, Loader2 } from 'lucide-react';
 
 const labels = {
-  en: { label: 'Call Me', confirming: 'KrishiSathi will call you now!', ringing: 'Phone is ringing! Pick up!', failed: 'Call failed. Try again.', confirm: 'Call Now', cancel: 'Cancel' },
-  hi: { label: 'मुझे कॉल करें', confirming: 'KrishiSathi abhi aapko call karega!', ringing: 'Phone baj raha hai! Uthaiye!', failed: 'Call fail hua. Dobara try karein.', confirm: 'Call karein', cancel: 'Cancel' },
-  te: { label: 'నాకు కాల్', confirming: 'KrishiSathi meeku ippudu call chestundi!', ringing: 'Phone mogruthundi! Teeyandi!', failed: 'Call fail ayyindi. Malli try cheyandi.', confirm: 'Call cheyandi', cancel: 'Cancel' },
+  en: { label: 'Call Me', confirming: 'KrishiSathi will call you now!', ringing: 'Phone is ringing! Pick up!', failed: 'Call failed. Try again.', confirm: 'Call Now', cancel: 'Cancel', trialNote: 'Note: This project uses a Twilio trial account. Calls can only be made to verified numbers. Sorry for the inconvenience.' },
+  hi: { label: 'मुझे कॉल करें', confirming: 'KrishiSathi abhi aapko call karega!', ringing: 'Phone baj raha hai! Uthaiye!', failed: 'Call fail hua. Dobara try karein.', confirm: 'Call karein', cancel: 'Cancel', trialNote: 'Note: Yeh project Twilio trial account use karta hai. Call sirf verified numbers par ho sakti hai. Asuvidhaa ke liye kshama karein.' },
+  te: { label: 'నాకు కాల్', confirming: 'KrishiSathi meeku ippudu call chestundi!', ringing: 'Phone mogruthundi! Teeyandi!', failed: 'Call fail ayyindi. Malli try cheyandi.', confirm: 'Call cheyandi', cancel: 'Cancel', trialNote: 'Note: Ee project Twilio trial account vadutundi. Calls verified numbers ki matrame cheyagalamu. Asoukaryaniki kshaminchamdi.' },
 };
 
 export default function CallMeButton() {
@@ -64,7 +64,8 @@ export default function CallMeButton() {
                   <Phone className="w-8 h-8 text-green-600" />
                 </div>
                 <p className="text-lg font-semibold text-gray-800 mb-2">{l.confirming}</p>
-                <p className="text-sm text-gray-500 mb-6">{user.phone}</p>
+                <p className="text-sm text-gray-500 mb-2">{user.phone}</p>
+                <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg p-2 mb-4">{l.trialNote}</p>
                 <div className="flex gap-3">
                   <button onClick={handleCancel} className="flex-1 py-3 rounded-xl border border-gray-200 text-gray-600 font-medium hover:bg-gray-50 transition-colors min-h-[48px]">
                     {l.cancel}

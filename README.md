@@ -33,8 +33,8 @@ Indian farmers face a gap between available agricultural data and their ability 
 - JWT authentication + WebAuthn/FIDO2
 
 **AI & Voice**
-- Google Gemini (advisory generation, translations, farming agent)
-- Anthropic Claude Haiku (primary voice agent brain - fast + multilingual)
+- Google Gemini (crop advisory generation, voice agent brain, translations)
+- Google Translate (free fallback when Gemini is rate-limited)
 - Deepgram (speech-to-text streaming)
 - Murf AI / Deepgram (text-to-speech)
 - LiveKit (real-time voice rooms)
@@ -46,13 +46,12 @@ Indian farmers face a gap between available agricultural data and their ability 
 **APIs**
 - OpenWeatherMap (weather data)
 - data.gov.in (market prices)
-- Google Translate (free fallback for translations)
 
 ## How the Voice System Works
 
 This is the core of KrishiSathi and worth explaining:
 
-1. **In-App Voice**: Farmer taps the mic -> Deepgram streams speech-to-text -> text goes to Claude Haiku with full farmer context (crop, location, weather, prices) -> AI responds in farmer's language -> Murf/Deepgram converts to speech -> farmer hears the answer.
+1. **In-App Voice**: Farmer taps the mic -> Deepgram streams speech-to-text -> text goes to Gemini AI with full farmer context (crop, location, weather, prices) -> AI responds in farmer's language -> Murf/Deepgram converts to speech -> farmer hears the answer.
 
 2. **Phone Call ("Call Me")**: Farmer taps "Call Me" -> server triggers Twilio outbound call -> farmer's phone rings -> Twilio IVR collects speech -> sends to our webhook -> AI generates response -> Twilio speaks it back using `<Say>`. The farmer can have a full conversation with the AI over a regular phone call.
 
@@ -62,8 +61,8 @@ This is the core of KrishiSathi and worth explaining:
 
 Everything works in three languages:
 - English
-- Hindi (हिन्दी)
-- Telugu (తెలుగు)
+- Hindi
+- Telugu
 
 The language is set during registration and persists across sessions. Crop advisory, schemes, news, and the voice agent all respond in the farmer's chosen language.
 
@@ -91,7 +90,7 @@ KrishiSathi/
 │   ├── models/                # Mongoose schemas
 │   ├── routes/                # Express route definitions
 │   └── utils/
-│       ├── gemini.js          # AI (Gemini + Claude), translation, advisory gen
+│       ├── gemini.js          # Gemini AI, Google Translate, advisory generation
 │       ├── twilio.js          # SMS, WhatsApp, voice call utilities
 │       ├── farmerContext.js   # Loads farmer's full context for AI
 │       └── voiceConfig.js    # Voice/language config for TTS and IVR
@@ -102,7 +101,7 @@ KrishiSathi/
 ### Prerequisites
 - Node.js 18+
 - MongoDB (Atlas or local)
-- API keys for: Gemini, Anthropic, Twilio, OpenWeatherMap, Deepgram
+- API keys for: Gemini, Twilio, OpenWeatherMap, Deepgram
 
 ### Environment Variables
 
@@ -114,9 +113,8 @@ MONGODB_URI=your_mongodb_connection_string
 JWT_SECRET=your_jwt_secret
 JWT_EXPIRE=7d
 
-# AI
+# AI (Gemini)
 GEMINI_API_KEY=your_gemini_key
-ANTHROPIC_API_KEY=your_anthropic_key
 
 # Weather
 OPENWEATHER_API_KEY=your_openweather_key
@@ -169,6 +167,8 @@ cd server && railway up . --path-as-root
 
 - **App**: https://krishisathi-rose.vercel.app
 - **API**: https://passionate-alignment-production.up.railway.app
+
+> **Note**: This project uses free-tier API plans (Gemini, Twilio trial). You may occasionally see rate-limit messages if the AI service is temporarily overloaded. Phone calls via "Call Me" only work to Twilio-verified numbers due to the trial account.
 
 ## What We Built During the Hackathon
 

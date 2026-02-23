@@ -409,9 +409,18 @@ export default function CropAdvisory() {
       setConfidence(advisoryData.confidence || response.confidence || 'general');
       setActiveTab('fertilizer');
     } catch (err) {
-      setError(
-        err?.response?.data?.message || t('common.error')
-      );
+      const msg = err?.response?.data?.message;
+      if (msg === 'RATE_LIMITED' || err?.response?.status === 429) {
+        const rateMsgs = {
+          en: 'This project uses free API plans. The AI service is temporarily rate-limited. Please try again in a few minutes.',
+          hi: 'Yeh project free API plans use karta hai. AI service abhi rate-limited hai. Kripya kuch minute baad dobara try karein.',
+          te: 'Ee project free API plans vadutundi. AI service ippudu rate-limited aindi. Dayachesi konni nimishala taruvata malli try cheyandi.',
+        };
+        const lang = localStorage.getItem('krishisathi-lang') || 'en';
+        setError(rateMsgs[lang] || rateMsgs.en);
+      } else {
+        setError(msg || t('common.error'));
+      }
     } finally {
       setLoading(false);
     }

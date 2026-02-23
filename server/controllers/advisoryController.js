@@ -1,5 +1,5 @@
 const CropRule = require('../models/CropRule');
-const { generateAdvisory, translateJSON } = require('../utils/gemini');
+const { generateAdvisory, translateJSON, RateLimitError } = require('../utils/gemini');
 
 // GET /api/advisory?crop=cotton&soilType=black&season=kharif&lang=hi
 exports.getAdvisory = async (req, res, next) => {
@@ -92,6 +92,12 @@ exports.getAdvisory = async (req, res, next) => {
           });
         }
       } catch (aiErr) {
+        if (aiErr instanceof RateLimitError) {
+          return res.status(429).json({
+            success: false,
+            message: 'RATE_LIMITED',
+          });
+        }
         console.error('Gemini advisory error:', aiErr.message);
       }
     }

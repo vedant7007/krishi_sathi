@@ -14,15 +14,10 @@ const MODELS = [
 ];
 let currentModelIdx = 0;
 
-function getModel() {
-  return genAI.getGenerativeModel({ model: MODELS[currentModelIdx] });
-}
-
 // ─── Persistent file-based translation cache ───
 const CACHE_DIR = path.join(__dirname, '..', '.translation-cache');
 if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
 
-// Also keep in-memory for fast access
 const memCache = new Map();
 
 function hashStr(str) {
@@ -35,9 +30,7 @@ function hashStr(str) {
 }
 
 function getCached(key) {
-  // Check memory first
   if (memCache.has(key)) return memCache.get(key);
-  // Check file cache
   const filePath = path.join(CACHE_DIR, `${key}.json`);
   try {
     if (fs.existsSync(filePath)) {
@@ -72,12 +65,7 @@ async function googleTranslateText(text, targetLang) {
   }
 }
 
-/**
- * Translate an array of objects using free Google Translate (field-by-field).
- * Used as fallback when Gemini is rate-limited.
- */
 async function googleTranslateBatch(items, fields, targetLang) {
-  // Translate all items and their fields in parallel for speed
   return Promise.all(
     items.map(async (item) => {
       const copy = { ...item };
@@ -93,10 +81,6 @@ async function googleTranslateBatch(items, fields, targetLang) {
   );
 }
 
-/**
- * Translate a single object's string values using free Google Translate.
- * Recursively handles nested objects and arrays.
- */
 async function googleTranslateObj(obj, targetLang) {
   if (!obj || typeof obj !== 'object') return obj;
 
@@ -127,21 +111,29 @@ async function googleTranslateObj(obj, targetLang) {
   return copy;
 }
 
+// ─── Custom error for rate limits ───
+class RateLimitError extends Error {
+  constructor() {
+    super('RATE_LIMITED');
+    this.name = 'RateLimitError';
+    this.statusCode = 429;
+  }
+}
+exports.RateLimitError = RateLimitError;
+
 /**
  * Send a prompt to Gemini and get text response.
- * Includes retry with exponential backoff on rate limits.
+ * Throws RateLimitError when all models are exhausted.
  */
 exports.generate = async (prompt) => {
   const MAX_RETRIES = 2;
 
   for (let retry = 0; retry < MAX_RETRIES; retry++) {
-    // Always try models in priority order (best first)
     for (let i = 0; i < MODELS.length; i++) {
       try {
         const modelName = MODELS[i];
         const model = genAI.getGenerativeModel({ model: modelName });
         const result = await model.generateContent(prompt);
-        // Remember which model worked for logging
         if (i !== currentModelIdx) {
           console.log(`[Gemini] Switched to ${modelName}`);
           currentModelIdx = i;
@@ -162,24 +154,22 @@ exports.generate = async (prompt) => {
     }
 
     if (retry < MAX_RETRIES - 1) {
-      const backoffMs = 2000;
-      console.log(`[Gemini] All models failed, retrying in ${backoffMs / 1000}s...`);
-      await new Promise((r) => setTimeout(r, backoffMs));
+      console.log(`[Gemini] All models failed, retrying in 2s...`);
+      await new Promise((r) => setTimeout(r, 2000));
     }
   }
 
-  throw new Error('All Gemini models rate limited. Please try again later.');
+  throw new RateLimitError();
 };
 
 /**
  * Translate a JSON object's string values.
- * Tries Gemini first, falls back to free Google Translate.
+ * Tries Gemini first, falls back to Google Translate.
  */
 exports.translateJSON = async (obj, targetLang) => {
   if (!obj || targetLang === 'en') return obj;
   const langName = targetLang === 'hi' ? 'Hindi' : targetLang === 'te' ? 'Telugu' : 'English';
 
-  // Check cache
   const cacheKey = 'tj_' + hashStr(JSON.stringify(obj) + ':' + targetLang);
   const cached = getCached(cacheKey);
   if (cached) {
@@ -187,18 +177,14 @@ exports.translateJSON = async (obj, targetLang) => {
     return cached;
   }
 
-  // Try Gemini first
   const prompt = `Translate ALL string values in the following JSON object to ${langName}.
 Keep all keys exactly the same. Keep numbers and null values unchanged.
 Return ONLY the valid JSON, no markdown fences, no explanation.
 
 ${JSON.stringify(obj)}`;
 
-  // Helper: check if translation actually changed the content (avoid caching English as "translated")
   function didTranslate(original, translated) {
-    const origStr = JSON.stringify(original);
-    const transStr = JSON.stringify(translated);
-    return origStr !== transStr;
+    return JSON.stringify(original) !== JSON.stringify(translated);
   }
 
   try {
@@ -206,46 +192,15 @@ ${JSON.stringify(obj)}`;
     const cleaned = result.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
     const parsed = JSON.parse(cleaned);
     console.log(`[translateJSON] Gemini translated to ${langName}`);
-    if (didTranslate(obj, parsed)) {
-      setCache(cacheKey, parsed);
-    } else {
-      console.warn(`[translateJSON] Gemini returned same content — not caching`);
-    }
+    if (didTranslate(obj, parsed)) setCache(cacheKey, parsed);
     return parsed;
   } catch (geminiErr) {
-    console.log(`[translateJSON] Gemini failed (${geminiErr.message?.substring(0, 60)}), trying Claude for ${langName}`);
-
-    // Fallback 2: Claude Haiku (separate API, not affected by Gemini rate limits)
-    if (process.env.ANTHROPIC_API_KEY) {
-      try {
-        const Anthropic = require('@anthropic-ai/sdk');
-        const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-        const msg = await anthropic.messages.create({
-          model: 'claude-haiku-4-5-20251001',
-          max_tokens: 4096,
-          messages: [{ role: 'user', content: prompt }],
-        });
-        const claudeResult = msg.content?.[0]?.text || '';
-        const cleaned = claudeResult.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-        const parsed = JSON.parse(cleaned);
-        console.log(`[translateJSON] Claude translated to ${langName}`);
-        if (didTranslate(obj, parsed)) {
-          setCache(cacheKey, parsed);
-        }
-        return parsed;
-      } catch (claudeErr) {
-        console.log(`[translateJSON] Claude failed (${claudeErr.message?.substring(0, 60)}), trying Google Translate for ${langName}`);
-      }
-    }
-
-    // Fallback 3: Google Translate (free, but poor for technical content)
+    console.log(`[translateJSON] Gemini failed, trying Google Translate for ${langName}`);
     try {
       const result = await googleTranslateObj(obj, targetLang);
       if (didTranslate(obj, result)) {
         setCache(cacheKey, result);
         console.log(`[translateJSON] Google Translate succeeded for ${langName}`);
-      } else {
-        console.warn(`[translateJSON] Google Translate returned same content — not caching`);
       }
       return result;
     } catch (err) {
@@ -257,21 +212,19 @@ ${JSON.stringify(obj)}`;
 
 /**
  * Translate an array of objects in a SINGLE call (batch).
- * Tries Gemini first, falls back to free Google Translate.
+ * Tries Gemini first, falls back to Google Translate.
  */
 exports.translateBatch = async (items, fields, targetLang) => {
   if (!items || items.length === 0 || targetLang === 'en') return items;
 
   const langName = targetLang === 'hi' ? 'Hindi' : targetLang === 'te' ? 'Telugu' : 'English';
 
-  // Build only the translatable parts for cache key
   const toTranslate = items.map((item, idx) => {
     const obj = { _i: idx };
     fields.forEach((f) => { obj[f] = item[f] || ''; });
     return obj;
   });
 
-  // Check cache
   const cacheKey = 'tb_' + hashStr(JSON.stringify(toTranslate) + ':' + targetLang);
   const cached = getCached(cacheKey);
   if (cached) {
@@ -279,7 +232,6 @@ exports.translateBatch = async (items, fields, targetLang) => {
     return cached;
   }
 
-  // Try Gemini first (single API call for all items)
   const prompt = `Translate ALL string values in the following JSON array to ${langName}.
 Keep all keys exactly the same. Keep _i numbers unchanged.
 Return ONLY the valid JSON array, no markdown fences, no explanation.
@@ -290,7 +242,6 @@ ${JSON.stringify(toTranslate)}`;
     const result = await exports.generate(prompt);
     const cleaned = result.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
     const parsed = JSON.parse(cleaned);
-
     if (!Array.isArray(parsed)) throw new Error('Not an array');
 
     const merged = items.map((item, idx) => {
@@ -305,40 +256,7 @@ ${JSON.stringify(toTranslate)}`;
     setCache(cacheKey, merged);
     return merged;
   } catch (geminiErr) {
-    // Fallback 2: Claude Haiku
-    if (process.env.ANTHROPIC_API_KEY) {
-      try {
-        console.log(`[translateBatch] Gemini failed, trying Claude for ${langName}`);
-        const Anthropic = require('@anthropic-ai/sdk');
-        const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-        const msg = await anthropic.messages.create({
-          model: 'claude-haiku-4-5-20251001',
-          max_tokens: 4096,
-          messages: [{ role: 'user', content: prompt }],
-        });
-        const claudeResult = msg.content?.[0]?.text || '';
-        const cleaned = claudeResult.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-        const parsed = JSON.parse(cleaned);
-        if (!Array.isArray(parsed)) throw new Error('Not an array');
-
-        const merged = items.map((item, idx) => {
-          const translated = parsed.find((p) => p._i === idx) || parsed[idx];
-          if (!translated) return item;
-          const copy = { ...item };
-          fields.forEach((f) => { if (translated[f]) copy[f] = translated[f]; });
-          return copy;
-        });
-
-        console.log(`[translateBatch] Claude translated ${items.length} items to ${langName}`);
-        setCache(cacheKey, merged);
-        return merged;
-      } catch (claudeErr) {
-        console.log(`[translateBatch] Claude failed (${claudeErr.message?.substring(0, 60)}), trying Google Translate`);
-      }
-    }
-
-    // Fallback 3: free Google Translate
-    console.log(`[translateBatch] Using Google Translate fallback for ${langName}`);
+    console.log(`[translateBatch] Gemini failed, using Google Translate for ${langName}`);
     try {
       const merged = await googleTranslateBatch(items, fields, targetLang);
       console.log(`[translateBatch] Google Translate: ${items.length} items to ${langName}`);
@@ -352,8 +270,7 @@ ${JSON.stringify(toTranslate)}`;
 };
 
 /**
- * Voice AI Agent — send farmer's message to Gemini with full context.
- * Returns short, voice-friendly response in the farmer's language.
+ * Voice AI Agent — Gemini-only with full farmer context.
  */
 exports.askFarmingAgent = async (userMessage, farmerContext, language = 'en', conversationHistory = []) => {
   const langName = language === 'hi' ? 'Hindi' : language === 'te' ? 'Telugu' : 'English';
@@ -363,7 +280,6 @@ exports.askFarmingAgent = async (userMessage, farmerContext, language = 'en', co
   const prices = farmerContext?.prices || [];
   const schemes = farmerContext?.schemes || [];
 
-  // Build weather summary
   let weatherSummary = 'No weather data available.';
   if (weather?.current) {
     const c = weather.current;
@@ -376,7 +292,6 @@ exports.askFarmingAgent = async (userMessage, farmerContext, language = 'en', co
     }
   }
 
-  // Build advisory summary
   let advisorySummary = 'No crop advisory data available.';
   if (advisory) {
     const parts = [];
@@ -389,7 +304,6 @@ exports.askFarmingAgent = async (userMessage, farmerContext, language = 'en', co
     advisorySummary = parts.join('\n') || advisorySummary;
   }
 
-  // Build prices summary
   let pricesSummary = 'No market price data available.';
   if (prices.length > 0) {
     pricesSummary = prices.map((p) => {
@@ -398,7 +312,6 @@ exports.askFarmingAgent = async (userMessage, farmerContext, language = 'en', co
     }).join('\n');
   }
 
-  // Build schemes summary
   let schemesSummary = 'No scheme data available.';
   if (schemes.length > 0) {
     schemesSummary = schemes.map((s) => {
@@ -439,39 +352,6 @@ RESPONSE RULES (CRITICAL \u2014 this is VOICE, farmer is listening with ears, no
     en: 'Sorry, I am having trouble responding right now. Please try again in a moment.',
   };
 
-  // Build messages array with conversation history for multi-turn
-  const claudeMessages = [];
-  if (conversationHistory.length > 0) {
-    for (const msg of conversationHistory) {
-      if (msg.role === 'user' || msg.role === 'assistant') {
-        claudeMessages.push({ role: msg.role, content: msg.content });
-      }
-    }
-  }
-  claudeMessages.push({ role: 'user', content: userMessage });
-
-  // Try Claude Haiku first (cheap + fast + reliable), then Gemini as fallback
-  if (process.env.ANTHROPIC_API_KEY) {
-    try {
-      const Anthropic = require('@anthropic-ai/sdk');
-      const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-      const msg = await anthropic.messages.create({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 200,
-        system: systemPrompt,
-        messages: claudeMessages,
-      });
-      const text = msg.content?.[0]?.text;
-      if (text) {
-        console.log(`[askFarmingAgent] Claude Haiku responded (${claudeMessages.length} msgs)`);
-        return text.trim();
-      }
-    } catch (err) {
-      console.warn('[askFarmingAgent] Claude Haiku failed:', err.message?.substring(0, 80));
-    }
-  }
-
-  // Fallback to Gemini (include history as context)
   let historyBlock = '';
   if (conversationHistory.length > 0) {
     historyBlock = '\n\nPrevious conversation:\n' +
@@ -482,13 +362,18 @@ RESPONSE RULES (CRITICAL \u2014 this is VOICE, farmer is listening with ears, no
     const response = await exports.generate(prompt);
     return response.trim();
   } catch (err) {
-    console.error('[askFarmingAgent] Gemini fallback also failed:', err.message);
+    if (err instanceof RateLimitError) {
+      console.warn('[askFarmingAgent] Gemini rate limited');
+      return fallbacks[language] || fallbacks.en;
+    }
+    console.error('[askFarmingAgent] Error:', err.message);
     return fallbacks[language] || fallbacks.en;
   }
 };
 
 /**
  * Generate crop advisory using Gemini when DB has no data.
+ * Throws RateLimitError if Gemini is exhausted.
  */
 exports.generateAdvisory = async (crop, soilType, season, targetLang) => {
   const langName = targetLang === 'hi' ? 'Hindi' : targetLang === 'te' ? 'Telugu' : 'English';
@@ -540,31 +425,7 @@ Return ONLY valid JSON (no markdown fences) with this exact structure:
   }
 }`;
 
-  // Try Gemini first, fall back to Claude if rate limited
-  let result;
-  try {
-    result = await exports.generate(prompt);
-  } catch (geminiErr) {
-    console.log(`[generateAdvisory] Gemini failed, trying Claude for ${crop}`);
-    if (process.env.ANTHROPIC_API_KEY) {
-      try {
-        const Anthropic = require('@anthropic-ai/sdk');
-        const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-        const msg = await anthropic.messages.create({
-          model: 'claude-haiku-4-5-20251001',
-          max_tokens: 4096,
-          messages: [{ role: 'user', content: prompt }],
-        });
-        result = msg.content?.[0]?.text || '';
-      } catch (claudeErr) {
-        console.error(`[generateAdvisory] Claude also failed:`, claudeErr.message?.substring(0, 80));
-        return null;
-      }
-    } else {
-      return null;
-    }
-  }
-
+  const result = await exports.generate(prompt);
   try {
     const cleaned = result.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
     return JSON.parse(cleaned);

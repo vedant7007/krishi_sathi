@@ -8,7 +8,6 @@
     "seed": "node seeds/index.js"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.78.0",
     "@google/generative-ai": "^0.24.1",
     "@simplewebauthn/server": "^13.2.2",
     "axios": "^1.7.2",
